@@ -1,0 +1,100 @@
+{
+  "name": "@cryptochiefs/cryptochief-crypto-processing-node",
+  "version": "0.1.0",
+  "description": "Official Node.js and TypeScript SDK for the Crypto Chief crypto payment gateway and crypto processing API. Accept crypto payments, send single and mass crypto payouts, sign on-chain transactions and smart-contract calls, manage wallets, convert fiat to crypto, and verify webhooks across Ethereum, BNB Smart Chain, Polygon, Tron, TON, Solana, Bitcoin, XRP and 20+ blockchains. USDT and USDC stablecoin support with bigint precision; ships ESM and CommonJS with full type definitions.",
+  "keywords": [
+    "crypto",
+    "cryptocurrency",
+    "crypto-payments",
+    "accept-crypto-payments",
+    "crypto-payment-gateway",
+    "payment-gateway",
+    "crypto-processing",
+    "crypto-processing-api",
+    "crypto-payment-api",
+    "payments",
+    "payment-processing",
+    "payout",
+    "crypto-payout",
+    "mass-payout",
+    "batch-payout",
+    "crypto-invoice",
+    "stablecoin",
+    "usdt",
+    "usdc",
+    "erc20",
+    "trc20",
+    "bep20",
+    "jetton",
+    "web3",
+    "blockchain",
+    "wallet",
+    "webhook",
+    "ethereum",
+    "bsc",
+    "polygon",
+    "tron",
+    "ton",
+    "solana",
+    "bitcoin",
+    "xrp",
+    "litecoin",
+    "dogecoin",
+    "nodejs",
+    "typescript",
+    "sdk",
+    "cryptochief"
+  ],
+  "license": "MIT",
+  "author": "Crypto Chief",
+  "homepage": "https://crypto-chief.com/processing/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/crypto-chiefs/cryptochief-crypto-processing-node.git"
+  },
+  "bugs": {
+    "url": "https://github.com/crypto-chiefs/cryptochief-crypto-processing-node/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "example": "tsx",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@noble/hashes": "^1.5.0",
+    "@ton/core": "^0.59.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "tsup": "^8.0.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.4.0"
+  }
+}
