@@ -88,6 +88,7 @@ export * from './services/withdrawals';
 export * from './services/static-deposits';
 export * from './services/blockchain';
 export * from './services/currencies';
+export * from './services/credits';
 
 // Contract-call encoders
 export { encodeEvmCall, encodeEvmCallHex, evmSelector, canonicalSignature } from './contract/evm-abi';

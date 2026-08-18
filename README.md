@@ -79,6 +79,7 @@ Both credentials come from the dashboard -> Integration tab.
 | Static-deposit history | `client.staticDeposits` | `info`, `history` |
 | On-chain queries | `client.blockchain` | `contractsAvailable`, `walletBalance`, `transactionStatus` |
 | Fiat <-> crypto rate quote | `client.currencies` | `fiatToCrypto`, `cryptoToFiat` |
+| Billing credits (free of charge) | `client.credits` | `balance`, `topup` |
 
 ## End-to-end example: payout with confirmation
 

@@ -13,6 +13,7 @@ import { WithdrawalsService } from './services/withdrawals';
 import { StaticDepositsService } from './services/static-deposits';
 import { BlockchainService } from './services/blockchain';
 import { CurrenciesService } from './services/currencies';
+import { CreditsService } from './services/credits';
 
 /** SDK version, reported in the default `User-Agent`. */
 export const VERSION = '0.1.0';
@@ -110,6 +111,7 @@ export class CryptoChiefClient {
   readonly staticDeposits: StaticDepositsService;
   readonly blockchain: BlockchainService;
   readonly currencies: CurrenciesService;
+  readonly credits: CreditsService;
 
   constructor(options: ClientOptions) {
     if (!options || !options.merchantId) throw new CryptoChiefError('cryptochief: merchantId is required');
@@ -144,6 +146,7 @@ export class CryptoChiefClient {
     this.staticDeposits = new StaticDepositsService(this);
     this.blockchain = new BlockchainService(this);
     this.currencies = new CurrenciesService(this);
+    this.credits = new CreditsService(this);
   }
 
   /**
