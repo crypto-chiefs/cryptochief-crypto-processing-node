@@ -74,7 +74,7 @@ Both credentials come from the dashboard -> Integration tab.
 | TON contract calls (Jetton / NFT / text) | `client.transactions` | `jettonTransfer`, `nftTransfer`, `sendTonComment`, `signTonCall` |
 | Accept incoming payments | `client.payIns` | `create`, `selectAsset`, `resetAsset`, `cancel`, `info`, `history`, `waitFor` |
 | Wallet management + RSA decrypt | `client.wallets` | `generate`, `list`, `info`, `freeze`, `decryptPrivateKey` |
-| Treasury sweeps | `client.sweeps` | `force`, `history`, `walletHistory` |
+| Treasury sweeps | `client.sweeps` | `force`, `history`, `walletHistory`, `settings`, `updateSettings` |
 | Withdrawals (read-only) | `client.withdrawals` | `info`, `history` |
 | Static-deposit history | `client.staticDeposits` | `info`, `history` |
 | On-chain queries | `client.blockchain` | `contractsAvailable`, `walletBalance`, `transactionStatus` |
@@ -396,6 +396,40 @@ amount; the sender's Jetton wallet and gas budget are resolved automatically.
 **How do I verify a Crypto Chief webhook signature in Express?**
 `parseWebhookEvent(apiKey, rawBody, signature)` (with `express.raw`), or wrap a
 plain `http` handler with `createWebhookHandler`.
+
+**How do I control when a deposit wallet is swept?**
+`client.sweeps.settings(...)` reads the policy in force for one wallet and
+`client.sweeps.updateSettings(...)` changes it - sweep on arrival
+(`SweepPolicyMode.Momentum`), sweep once the balance reaches an amount
+(`SweepPolicyMode.Threshold` plus `thresholdAmountUsd`), or never on its own
+(`SweepPolicyMode.Off`, force still works). The read comes back in three layers -
+what will happen, what this wallet overrides, and what it inherits from the
+project - so you can tell a value of your own from an inherited one:
+
+```ts
+const s = await client.sweeps.updateSettings({
+  address: depositAddress,
+  typeWork: SweepPolicyMode.Threshold,
+  thresholdAmountUsd: '250',
+});
+// s.effective is the resolved policy; s.effective.source says which layer it came from.
+```
+
+Inheritance is per field: overriding the mode leaves the fee mode inherited.
+Pass `null` to stop overriding a field and go back to inheriting it.
+
+**How do I know a sweep actually settled?**
+Check `status`. `SweepStatus.Broadcasted` means the transaction is out and not
+yet confirmed; `SweepStatus.Completed` means confirmed, with `sweepConfirmations`
+and `completedAt` filled in. Earlier platform versions reported `completed` at
+broadcast, so a sweep could read as settled while its transaction was still
+unconfirmed.
+
+**How do I keep test payments off real chains?**
+Set `environment` on `payIns.create` to `Environment.Testnet` or
+`Environment.Mainnet`. It constrains the asset the platform picks when you have
+not named a concrete network - fiat mode and `ANY` - so an unconstrained pick
+cannot put a real payment on a test chain. Omit it to use the project's default.
 
 **Which blockchains does the crypto processing API support?**
 Ethereum, BNB Smart Chain, Polygon, Arbitrum, Optimism, Avalanche, Tron, TON,
