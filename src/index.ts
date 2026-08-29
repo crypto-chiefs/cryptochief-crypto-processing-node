@@ -75,6 +75,8 @@ export {
   type TransactionWebhookEvent,
   type PayInWebhookEvent,
   type StaticDepositWebhookEvent,
+  type SweepWebhookEvent,
+  SWEEP_EVENT_CONFIRMED,
   type WebhookEvent,
 } from './webhook';
 

@@ -231,9 +231,77 @@ export interface StaticDepositWebhookEvent {
   paidAt?: string;
 }
 
+/**
+ * The only sweep event the platform emits. There is deliberately no
+ * `sweep.broadcasted`: "we sent it" is not something you can act on, and an
+ * event that means "maybe" is one more thing to reconcile.
+ */
+export const SWEEP_EVENT_CONFIRMED = 'sweep.confirmed';
+
+/**
+ * Payload on `sweep.confirmed`: funds that arrived on one of your deposit
+ * wallets have been swept to your master wallet AND the sweep transaction is
+ * confirmed on chain.
+ *
+ * A `static_deposit.paid` tells you a customer paid you. This tells you the
+ * money has finished moving into your own custody - until it fires, the balance
+ * still sits on the deposit address. Reconciliation, treasury reporting and
+ * "funds available to pay out" all key off this event, not off the deposit.
+ *
+ * Sweeps run on static deposit wallets AND on the transit wallets issued per
+ * pay-in order; both deliver here, to the callback URL configured for the
+ * wallet the funds left.
+ */
+export interface SweepWebhookEvent {
+  event: string;
+  /** The sweeper task. One sweep settles once - use it as your idempotency key. */
+  taskId: string;
+  /** Always `'completed'`. A sweep reaches you in no other state. */
+  status: string;
+
+  /** The wallet the funds left - the address your customer paid into. */
+  walletAddress: string;
+  /** The master wallet they landed on. */
+  toAddress?: string;
+
+  network: Chain;
+  chainFamily?: ChainFamily;
+  assetSymbol: string;
+  assetContract?: string;
+  /** `'native'` or `'token'`. */
+  assetType?: string;
+  amountRaw?: string;
+  amountHuman?: string;
+
+  sweepTxHash: string;
+  /** Set when the platform had to fund gas on the wallet before it could sweep. */
+  gasPumpTxHash?: string;
+
+  /**
+   * What makes this event true rather than hopeful, and never zero. It travels
+   * with the event rather than being implied by it: "confirmed" is not the same
+   * number on every chain, so if you run your own finality policy you need the
+   * count to apply it.
+   */
+  sweepConfirmations: number;
+
+  /**
+   * When the chain was observed to hold the sweep. NOT the task's completion
+   * timestamp, which is stamped on every terminal outcome - failures included -
+   * and so says nothing about settlement.
+   */
+  confirmedAt?: string;
+
+  /** What triggered it: `'momentum'`, `'threshold'` or `'force'`. */
+  typeWork?: string;
+  /** What the sweep cost: network fee plus any gas or energy the platform fronted. */
+  totalFeeUsd?: string;
+}
+
 /** Union of all known webhook event payloads. */
 export type WebhookEvent =
   | PayoutWebhookEvent
   | TransactionWebhookEvent
   | PayInWebhookEvent
-  | StaticDepositWebhookEvent;
+  | StaticDepositWebhookEvent
+  | SweepWebhookEvent;

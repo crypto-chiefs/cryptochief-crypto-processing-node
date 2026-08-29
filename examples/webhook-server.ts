@@ -12,7 +12,12 @@
  *   });
  */
 import { createServer } from 'node:http';
-import { createWebhookHandler, WEBHOOK_SENDER_IPS, type WebhookEvent } from '../src/index';
+import {
+  createWebhookHandler,
+  WEBHOOK_SENDER_IPS,
+  type WebhookEvent,
+  type SweepWebhookEvent,
+} from '../src/index';
 
 const apiKey = process.env.API_KEY;
 if (!apiKey) throw new Error('set API_KEY in the environment');
@@ -33,11 +38,37 @@ const handler = createWebhookHandler<WebhookEvent>(apiKey, (evt, { res }) => {
     case 'static_deposit':
       // mempool | found | confirming | paid | reorged
       break;
+    case 'sweep':
+      // The one action is `confirmed`. A static_deposit.paid told you a
+      // customer paid; this tells you the money has finished moving into your
+      // own custody. Until it fires the balance still sits on the deposit
+      // wallet, so treasury reporting keys off this, not off the deposit.
+      onSweepConfirmed(evt as SweepWebhookEvent);
+      break;
     default:
       console.log(`  (unhandled domain ${domain}/${action})`);
   }
   res.writeHead(200).end('ok');
 });
+
+function onSweepConfirmed(evt: SweepWebhookEvent): void {
+  console.log(
+    `  sweep ${evt.taskId}: ${evt.amountHuman} ${evt.assetSymbol} ` +
+      `${evt.walletAddress} -> ${evt.toAddress} ` +
+      `tx=${evt.sweepTxHash} confirmations=${evt.sweepConfirmations} ` +
+      `trigger=${evt.typeWork} fee_usd=${evt.totalFeeUsd}`,
+  );
+
+  // taskId is the idempotency key: one sweep settles once. Seeing it twice
+  // means a redelivery - acknowledge and stop.
+  // if (await treasury.alreadyRecorded(evt.taskId)) return;
+
+  // The event only ever arrives confirmed, but apply your own finality policy
+  // here if you have one - "confirmed" is not the same number on every chain.
+  // await treasury.recordSettled(evt.taskId, evt.assetSymbol, evt.amountHuman, evt.sweepTxHash);
+  // await ledger.moveToAvailable(customerIdFor(evt.walletAddress), evt.assetSymbol, evt.amountHuman);
+  // await costs.record(evt.taskId, evt.totalFeeUsd);  // sweeps are not free
+}
 
 const server = createServer((req, res) => {
   if (req.method === 'POST' && req.url === '/webhook') {
