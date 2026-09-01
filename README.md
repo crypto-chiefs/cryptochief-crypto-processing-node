@@ -73,7 +73,7 @@ Both credentials come from the dashboard -> Integration tab.
 | Solana programs | `client.transactions` | `signAnchorCall`, `signSolanaCall` |
 | TON contract calls (Jetton / NFT / text) | `client.transactions` | `jettonTransfer`, `nftTransfer`, `sendTonComment`, `signTonCall` |
 | Accept incoming payments | `client.payIns` | `create`, `selectAsset`, `resetAsset`, `cancel`, `info`, `history`, `waitFor` |
-| Wallet management + RSA decrypt | `client.wallets` | `generate`, `list`, `info`, `freeze`, `rebindMaster`, `setCallbackUrl`, `decryptPrivateKey` |
+| Wallet management + RSA decrypt | `client.wallets` | `generate`, `list`, `info`, `freeze`, `rebindMaster`, `setCallbackUrl`, `setLabel`, `decryptPrivateKey` |
 | Treasury sweeps | `client.sweeps` | `force`, `history`, `walletHistory`, `settings`, `updateSettings` |
 | Withdrawals (read-only) | `client.withdrawals` | `info`, `history` |
 | Static-deposit history | `client.staticDeposits` | `info`, `history` |
@@ -267,8 +267,8 @@ PKCS#1 and PKCS#8 PEM are both accepted. Without the option, the rest of the SDK
 works untouched; only `decryptPrivateKey` requires it (it throws
 `RsaKeyNotConfiguredError`).
 
-Two things about a wallet can be changed after it exists - the master it settles
-to, and (static wallets only) the deposit webhook it announces to:
+Three things about a wallet can be changed after it exists - its name, the master
+it settles to, and (static wallets only) the deposit webhook it announces to:
 
 ```ts
 // Name it on creation - any wallet type, up to 255 characters.
@@ -279,6 +279,10 @@ const dep = await client.wallets.generate({
   label: 'customer-4242',
 });
 
+// Rename it afterwards, or pass '' to take the name away. Any wallet type.
+await client.wallets.setLabel(dep.address, 'customer-4242 (EU)');
+await client.wallets.setLabel(dep.address, ''); // back to nameless
+
 // Settle the next sweep somewhere else. Moves no money; what was already
 // swept stays on the old master. Re-running it changes nothing.
 await client.wallets.rebindMaster(dep.address, '0xNewMaster...');
@@ -288,8 +292,10 @@ await client.wallets.setCallbackUrl(dep.address, 'https://your.app/webhooks/depo
 await client.wallets.setCallbackUrl(dep.address, ''); // no more deposit webhooks
 ```
 
-`masterWalletAddress` and `callbackUrl` come back as `null` when the wallet has
-none - a master wallet has no master, a transit wallet never has a callback URL.
+`label`, `masterWalletAddress` and `callbackUrl` all come back as `null` when the
+wallet has none - nobody named it, a master wallet has no master, a transit wallet
+never has a callback URL. `label` is on every response that describes a wallet:
+generation, info, the list, and each of the three updates above.
 
 ## Webhooks
 
@@ -463,8 +469,15 @@ instruction to remove the webhook, and the SDK sends it as one. A deposit alread
 announced is not announced again to the new URL. Static wallets only.
 
 **How do I give a wallet a human-readable name?**
-Pass `label` (up to 255 characters) to `client.wallets.generate(...)`. It works for
-master, transit and static wallets alike.
+Pass `label` to `client.wallets.generate(...)`, or name one that already exists with
+`client.wallets.setLabel(address, 'customer-4242')`. It works for master, transit and
+static wallets alike - unlike the callback URL, nothing here is static-only. Names run
+to 255 characters; a longer one is refused with `LABEL_TOO_LONG`.
+
+**How do I take a wallet's name away again?**
+`client.wallets.setLabel(address, '')`. The empty string is the instruction to remove
+the name, and the SDK sends it as one. It reads back as `label: null` - a wallet has a
+name or it has none, and an empty string is never what you get.
 
 **How do I know a sweep actually settled?**
 Check `status`. `SweepStatus.Broadcasted` means the transaction is out and not

@@ -36,7 +36,7 @@ function sentBody(calls: Captured[]): Record<string, unknown> {
   return JSON.parse(firstCall(calls).init.body as string) as Record<string, unknown>;
 }
 
-/** The shape both new endpoints answer with: a static wallet that has both links. */
+/** The shape the wallet endpoints answer with: a static wallet with both links and a name. */
 const staticWallet = JSON.stringify({
   type: 'static',
   address: '0xstatic',
@@ -44,9 +44,10 @@ const staticWallet = JSON.stringify({
   frozen: false,
   master_wallet_address: '0xmaster',
   callback_url: 'https://your.app/webhooks/deposit',
+  label: 'customer-4242',
 });
 
-/** The same shape with both nullable links absent - the platform sends null, not "". */
+/** The same shape with the nullable fields absent - the platform sends null, not "". */
 const transitWallet = JSON.stringify({
   type: 'transit',
   address: '0xtransit',
@@ -54,6 +55,7 @@ const transitWallet = JSON.stringify({
   frozen: false,
   master_wallet_address: null,
   callback_url: null,
+  label: null,
 });
 
 describe('wallet generate', () => {
@@ -97,7 +99,7 @@ describe('wallet rebind-master', () => {
     expect(out.masterWalletAddress).toBe('0xmaster');
   });
 
-  it('decodes a wallet with no master and no callback without tripping over the nulls', async () => {
+  it('decodes a wallet with no master, no callback and no name without tripping over the nulls', async () => {
     const { client } = makeClient(() => new Response(transitWallet, { status: 200 }));
 
     const out = await client.wallets.rebindMaster('0xtransit', '0xmaster');
@@ -106,6 +108,7 @@ describe('wallet rebind-master', () => {
     // as null rather than throw or turn into the string "null".
     expect(out.masterWalletAddress).toBeNull();
     expect(out.callbackUrl).toBeNull();
+    expect(out.label).toBeNull();
     expect(out.frozen).toBe(false);
     expect(out.chainFamily).toBe(ChainFamily.Evm);
   });
@@ -151,5 +154,114 @@ describe('wallet callback-url', () => {
     expect(firstCall(calls).init.body).toBe('{"address":"0xstatic","callback_url":""}');
     // Cleared reads back as null, never as "".
     expect(out.callbackUrl).toBeNull();
+  });
+});
+
+describe('wallet label', () => {
+  it('sends exactly the address and the name', async () => {
+    const { client, calls } = makeClient(() => new Response(staticWallet, { status: 200 }));
+
+    const out = await client.wallets.setLabel('0xstatic', 'customer-4242');
+
+    expect(firstCall(calls).url).toContain('/v1/wallets/label');
+    expect(sentBody(calls)).toEqual({ address: '0xstatic', label: 'customer-4242' });
+    expect(out.label).toBe('customer-4242');
+  });
+
+  it('sends an empty label rather than omitting it', async () => {
+    const { client, calls } = makeClient(
+      () =>
+        new Response(
+          JSON.stringify({
+            type: 'static',
+            address: '0xstatic',
+            chain_family: 'EVM',
+            frozen: false,
+            master_wallet_address: '0xmaster',
+            callback_url: 'https://your.app/webhooks/deposit',
+            label: null,
+          }),
+          { status: 200 },
+        ),
+    );
+
+    const out = await client.wallets.setLabel('0xstatic', '');
+
+    // "" is the instruction to clear the name. Dropping the field would ask the
+    // platform to change nothing - the opposite of what the caller meant.
+    const body = sentBody(calls);
+    expect('label' in body).toBe(true);
+    expect(body.label).toBe('');
+    expect(firstCall(calls).init.body).toBe('{"address":"0xstatic","label":""}');
+    // Cleared reads back as null, never as "".
+    expect(out.label).toBeNull();
+  });
+
+  it('names a master wallet too - it is not static-only like the callback URL', async () => {
+    const { client, calls } = makeClient(
+      () =>
+        new Response(
+          JSON.stringify({
+            type: 'master',
+            address: '0xmaster',
+            chain_family: 'EVM',
+            frozen: false,
+            master_wallet_address: null,
+            callback_url: null,
+            label: 'Treasury EU',
+          }),
+          { status: 200 },
+        ),
+    );
+
+    const out = await client.wallets.setLabel('0xmaster', 'Treasury EU');
+
+    expect(sentBody(calls)).toEqual({ address: '0xmaster', label: 'Treasury EU' });
+    expect(out.type).toBe('master');
+    expect(out.label).toBe('Treasury EU');
+    expect(out.masterWalletAddress).toBeNull();
+  });
+});
+
+describe('wallet reads carry the label', () => {
+  it('reads the name off info, and a nameless wallet as null', async () => {
+    const { client, calls } = makeClient(() => new Response(staticWallet, { status: 200 }));
+
+    const named = await client.wallets.info('0xstatic');
+
+    expect(firstCall(calls).url).toContain('/v1/wallets/info');
+    expect(named.label).toBe('customer-4242');
+
+    const second = makeClient(() => new Response(transitWallet, { status: 200 }));
+    const nameless = await second.client.wallets.info('0xtransit');
+    // The key is always there; null is "no name", not "not reported".
+    expect(nameless.label).toBeNull();
+  });
+
+  it('reads the name off every item of the list', async () => {
+    const { client } = makeClient(
+      () => new Response(`{"items":[${staticWallet},${transitWallet}]}`, { status: 200 }),
+    );
+
+    const out = await client.wallets.list();
+
+    expect(out.items.map((w) => w.label)).toEqual(['customer-4242', null]);
+  });
+
+  it('reads the name off a freshly generated wallet', async () => {
+    const { client } = makeClient(
+      () =>
+        new Response(JSON.stringify({ address: '0xnew', chain_family: 'EVM', label: 'Treasury EU' }), {
+          status: 200,
+        }),
+    );
+
+    const out = await client.wallets.generate({
+      walletType: WalletType.Master,
+      chainFamily: ChainFamily.Evm,
+      label: 'Treasury EU',
+    });
+
+    expect(out.label).toBe('Treasury EU');
   });
 });

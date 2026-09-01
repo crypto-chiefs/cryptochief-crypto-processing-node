@@ -31,7 +31,13 @@ const wallet = await client.wallets.generate({
   // type; omit it and nothing is sent.
   label: 'Treasury EU',
 });
-console.log(`generated wallet: ${wallet.address}`);
+console.log(`generated wallet: ${wallet.address} (${wallet.label ?? 'unnamed'})`);
+
+// The name is not fixed at creation - set it later on any wallet type, or pass
+// '' to take it away. What comes back is the wallet as it now stands, with
+// `label` either the new name or null.
+const renamed = await client.wallets.setLabel(wallet.address, 'Treasury EU - cold');
+console.log(`renamed to: ${renamed.label}`);
 
 if (wallet.privateKeyEncrypted) {
   const privHex = client.wallets.decryptPrivateKey(wallet.privateKeyEncrypted);

@@ -76,6 +76,7 @@ export const ErrorCode = {
   ServiceError: 'SERVICE_ERROR',
   Unauthorized: 'UNAUTHORIZED',
   UrlCallbackRequired: 'URL_CALLBACK_REQUIRED',
+  LabelTooLong: 'LABEL_TOO_LONG',
   BatchEmpty: 'BATCH_EMPTY',
   BatchTooLarge: 'BATCH_TOO_LARGE',
   BatchDuplicateOrderId: 'BATCH_DUPLICATE_ORDER_ID',

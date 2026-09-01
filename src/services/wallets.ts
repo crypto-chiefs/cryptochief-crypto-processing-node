@@ -56,6 +56,12 @@ export interface Wallet {
    * empty string: {@link WalletsService.setCallbackUrl} clears it to `null`.
    */
   callbackUrl?: string | null;
+  /**
+   * The wallet's human-readable name. `null` when it has none - never an empty
+   * string, so a cleared name reads the same as one that was never set. Every
+   * wallet type carries the key; change it with {@link WalletsService.setLabel}.
+   */
+  label?: string | null;
   /** Base64 RSA-OAEP/SHA-256 ciphertext - decrypt with {@link WalletsService.decryptPrivateKey}. */
   privateKeyEncrypted?: string;
   createdAt?: string;
@@ -120,6 +126,23 @@ export class WalletsService extends BaseService {
    */
   setCallbackUrl(address: string, callbackUrl: string, opts?: RequestOptions): Promise<Wallet> {
     return this.call('/v1/wallets/callback-url', { address, callbackUrl }, opts);
+  }
+
+  /**
+   * Set or clear a wallet's human-readable name after it was created. Returns
+   * the wallet as it stands afterwards, with `label` either the new name or
+   * `null`.
+   *
+   * Pass `''` to clear it. The empty string is a value here, not an omission,
+   * and the SDK puts it on the wire as one; what comes back is `null`, because
+   * a wallet has a name or it has none.
+   *
+   * Works on every wallet type - master, transit and static alike, unlike
+   * {@link WalletsService.setCallbackUrl}. Names longer than 255 characters are
+   * refused with `LABEL_TOO_LONG`.
+   */
+  setLabel(address: string, label: string, opts?: RequestOptions): Promise<Wallet> {
+    return this.call('/v1/wallets/label', { address, label }, opts);
   }
 
   /**
