@@ -27,6 +27,9 @@ const client = new CryptoChiefClient({
 const wallet = await client.wallets.generate({
   walletType: WalletType.Master,
   chainFamily: ChainFamily.Evm,
+  // Optional human-readable name, up to 255 characters. Works for every wallet
+  // type; omit it and nothing is sent.
+  label: 'Treasury EU',
 });
 console.log(`generated wallet: ${wallet.address}`);
 

@@ -73,7 +73,7 @@ Both credentials come from the dashboard -> Integration tab.
 | Solana programs | `client.transactions` | `signAnchorCall`, `signSolanaCall` |
 | TON contract calls (Jetton / NFT / text) | `client.transactions` | `jettonTransfer`, `nftTransfer`, `sendTonComment`, `signTonCall` |
 | Accept incoming payments | `client.payIns` | `create`, `selectAsset`, `resetAsset`, `cancel`, `info`, `history`, `waitFor` |
-| Wallet management + RSA decrypt | `client.wallets` | `generate`, `list`, `info`, `freeze`, `decryptPrivateKey` |
+| Wallet management + RSA decrypt | `client.wallets` | `generate`, `list`, `info`, `freeze`, `rebindMaster`, `setCallbackUrl`, `decryptPrivateKey` |
 | Treasury sweeps | `client.sweeps` | `force`, `history`, `walletHistory`, `settings`, `updateSettings` |
 | Withdrawals (read-only) | `client.withdrawals` | `info`, `history` |
 | Static-deposit history | `client.staticDeposits` | `info`, `history` |
@@ -267,6 +267,30 @@ PKCS#1 and PKCS#8 PEM are both accepted. Without the option, the rest of the SDK
 works untouched; only `decryptPrivateKey` requires it (it throws
 `RsaKeyNotConfiguredError`).
 
+Two things about a wallet can be changed after it exists - the master it settles
+to, and (static wallets only) the deposit webhook it announces to:
+
+```ts
+// Name it on creation - any wallet type, up to 255 characters.
+const dep = await client.wallets.generate({
+  walletType: 'static',
+  chainFamily: 'EVM',
+  masterWalletAddress: '0xOldMaster...',
+  label: 'customer-4242',
+});
+
+// Settle the next sweep somewhere else. Moves no money; what was already
+// swept stays on the old master. Re-running it changes nothing.
+await client.wallets.rebindMaster(dep.address, '0xNewMaster...');
+
+// Point the deposit webhook at a new URL, or pass '' to clear it entirely.
+await client.wallets.setCallbackUrl(dep.address, 'https://your.app/webhooks/deposit');
+await client.wallets.setCallbackUrl(dep.address, ''); // no more deposit webhooks
+```
+
+`masterWalletAddress` and `callbackUrl` come back as `null` when the wallet has
+none - a master wallet has no master, a transit wallet never has a callback URL.
+
 ## Webhooks
 
 Outbound webhooks are signed with the same algorithm as outgoing requests.
@@ -425,6 +449,22 @@ const s = await client.sweeps.updateSettings({
 
 Inheritance is per field: overriding the mode leaves the fee mode inherited.
 Pass `null` to stop overriding a field and go back to inheriting it.
+
+**How do I re-point a deposit wallet at a different master wallet?**
+`client.wallets.rebindMaster(address, newMaster)`. It moves no money - it decides
+where the *next* sweep settles, queued sweeps included; whatever was already
+swept stays on the old master. Idempotent, so a retry is free. Transit and static
+wallets only, and the new master has to be the same chain family and not frozen.
+
+**How do I change or remove a static wallet's deposit webhook after creating it?**
+`client.wallets.setCallbackUrl(address, 'https://your.app/webhooks/deposit')`, and
+`client.wallets.setCallbackUrl(address, '')` to clear it - the empty string is the
+instruction to remove the webhook, and the SDK sends it as one. A deposit already
+announced is not announced again to the new URL. Static wallets only.
+
+**How do I give a wallet a human-readable name?**
+Pass `label` (up to 255 characters) to `client.wallets.generate(...)`. It works for
+master, transit and static wallets alike.
 
 **How do I know a sweep actually settled?**
 Check `status`. `SweepStatus.Broadcasted` means the transaction is out and not
