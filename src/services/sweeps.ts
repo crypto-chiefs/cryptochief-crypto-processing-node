@@ -12,12 +12,29 @@ export type SweepMode = (typeof SweepMode)[keyof typeof SweepMode];
 
 export interface SweepHistoryQuery {
   mode?: SweepMode;
+  /**
+   * One {@link SweepStatus}. Omit it and every status is included, `skipped`
+   * ones among them - which is why an unfiltered page looks busier than the
+   * sweeps that actually moved money.
+   */
+  status?: SweepStatus | string;
+  /**
+   * Substring match on the wallet address, the sweep or gas-pump transaction
+   * hash, and `task_id`.
+   */
+  search?: string;
   page?: number;
   pageSize?: number;
 }
 
 export interface SweepWalletHistoryQuery extends SweepHistoryQuery {
   address: string;
+  /**
+   * Substring match on the sweep or gas-pump transaction hash and `task_id`.
+   * The wallet is already fixed by `address`, so unlike the project-wide
+   * history this one does not search addresses.
+   */
+  search?: string;
 }
 
 /**
@@ -56,12 +73,18 @@ export interface Sweep {
   /** What triggered this sweep: momentum, threshold or force. */
   typeWork?: string;
 
-  /**
-   * Confirmations seen on the sweep transaction, and when it reached the
-   * network's confirmation target. Read them with {@link status}: `completedAt`
-   * is absent while the sweep is still in flight.
-   */
+  /** Confirmations seen on the sweep transaction. `0` until it is mined. */
   sweepConfirmations?: number;
+  /**
+   * When the sweep reached a TERMINAL OUTCOME - failures included. The sweeper
+   * stamps it on `failed` and `skipped` exactly as it does on `completed`, so
+   * its presence says the sweep finished, not that it succeeded.
+   *
+   * **Do not read it as settlement.** For that, check `sweepConfirmations` is
+   * above zero, or take `confirmedAt` off the `sweep.confirmed` webhook - which
+   * carries a separate field precisely because this one does not answer the
+   * question.
+   */
   completedAt?: string;
 
   /**
@@ -113,11 +136,17 @@ export const SweepPolicyMode = {
 export type SweepPolicyMode = (typeof SweepPolicyMode)[keyof typeof SweepPolicyMode];
 
 /**
- * Who pays the gas for a sweep.
+ * Who covers the gas for a sweep when the deposit wallet cannot.
  *
- * - `Client`: taken from the swept wallet itself.
- * - `Service`: paid by the platform's service wallet.
- * - `Mix`: the service wallet funds the gas, reclaimed from the sweep.
+ * A deposit wallet that already holds enough of the chain's native coin pays
+ * for its own transfer whatever this is set to. The mode only decides who makes
+ * up a shortfall:
+ *
+ * - `Client`: your own master wallet fronts it.
+ * - `Service`: the platform supplies it, and the cost is BILLED TO YOUR API
+ *   CREDITS.
+ * - `Mix`: **the default.** Tries `Client` first and falls back to `Service`
+ *   when the master wallet cannot cover it.
  */
 export const SweepFeeMode = {
   Client: 'client',
@@ -126,12 +155,44 @@ export const SweepFeeMode = {
 } as const;
 export type SweepFeeMode = (typeof SweepFeeMode)[keyof typeof SweepFeeMode];
 
+/**
+ * What buys the energy a TRON transfer needs.
+ *
+ * - `Native`: the wallet burns its own TRX for it.
+ * - `Rented`: the platform supplies the energy, billed to your API credits
+ *   once the transfer is on chain.
+ *
+ * TRON only - the value is carried and ignored on every other chain. It answers
+ * a different question from {@link SweepFeeMode} (what is bought, rather than
+ * who covers the network fee), so the two are independent and energy can be
+ * supplied under any fee mode.
+ *
+ * **Not setting it is not the same as setting `Native`.** A wallet that never
+ * chose one gets the platform default, which is `Rented` - so energy is
+ * supplied, and billed to your credits, without anybody having switched it on.
+ * To have the wallet burn its own TRX, send `Native` explicitly.
+ */
+export const SweepGasSource = {
+  Native: 'native',
+  Rented: 'rented',
+} as const;
+export type SweepGasSource = (typeof SweepGasSource)[keyof typeof SweepGasSource];
+
 /** A resolved set of sweep rules. */
 export interface SweepPolicy {
   typeWork: SweepPolicyMode | string;
   /** Meaningful only when `typeWork` is `threshold`. */
   thresholdAmountUsd?: string;
   feeMode: SweepFeeMode | string;
+  /**
+   * What buys the energy on TRON - see {@link SweepGasSource}. Required, like
+   * its siblings above, because a resolved policy always carries a concrete
+   * one: on {@link SweepSettings.effective} this is the field to read, and a
+   * wallet that never chose one reads `rented` there, that being the platform
+   * default. The layer where "not decided" is expressible is
+   * {@link SweepOverride}, where it is nullable.
+   */
+  gasSource: SweepGasSource | string;
   /**
    * Which layer the mode came from: `wallet_network`, `wallet`, `project` or
    * `default`. Present on {@link SweepSettings.effective}, where the question
@@ -153,6 +214,13 @@ export interface SweepOverride {
   typeWork: string | null;
   thresholdAmountUsd: string | null;
   feeMode: string | null;
+  /**
+   * What buys the energy on TRON - see {@link SweepGasSource}. `null` means
+   * this layer does not decide it: the value is INHERITED, not switched off, so
+   * `null` here is not "burn the wallet's own TRX". What will actually happen
+   * is {@link SweepSettings.effective}'s `gasSource`.
+   */
+  gasSource: string | null;
   /** Who wrote it: `merchant` or `operator`. */
   source: string;
   /**
@@ -198,6 +266,14 @@ export interface SweepSettingsUpdate {
   typeWork?: SweepPolicyMode | string | null;
   thresholdAmountUsd?: string | null;
   feeMode?: SweepFeeMode | string | null;
+  /**
+   * What buys the energy on TRON - see {@link SweepGasSource}. Leaving it
+   * `undefined` does not mean `native`: it leaves the stored value alone, and
+   * where nothing is stored the platform default `rented` applies. Send
+   * `SweepGasSource.Native` to opt out of rented energy, and `null` to stop
+   * overriding the field and inherit it again.
+   */
+  gasSource?: SweepGasSource | string | null;
 }
 
 export interface SweepHistoryResponse {
@@ -220,12 +296,20 @@ export class SweepsService extends BaseService {
     return this.call('/v1/sweeps/force', { address, networkCode: network }, opts);
   }
 
-  /** Recent sweeps across the whole project. */
+  /**
+   * Recent sweeps across the whole project, narrowed by trigger (`mode`),
+   * outcome (`status`) or a `search` substring over the wallet address, the
+   * sweep and gas-pump transaction hashes and `task_id`.
+   */
   history(query: SweepHistoryQuery = {}, opts?: RequestOptions): Promise<SweepHistoryResponse> {
     return this.call('/v1/sweeps/history', query, opts);
   }
 
-  /** Recent sweeps scoped to one wallet. */
+  /**
+   * Recent sweeps scoped to one wallet. Takes the same `mode`, `status` and
+   * `search` filters as {@link history}; `search` here matches the transaction
+   * hashes and `task_id`, the address being fixed already.
+   */
   walletHistory(query: SweepWalletHistoryQuery, opts?: RequestOptions): Promise<SweepHistoryResponse> {
     return this.call('/v1/sweeps/wallet/history', query, opts);
   }
@@ -233,6 +317,9 @@ export class SweepsService extends BaseService {
   /**
    * The auto-sweep policy in force for one wallet, together with what it
    * overrides and what it inherits.
+   *
+   * Read `effective.gasSource` for what will actually pay for TRON energy; a
+   * `null` in `override` says only that the wallet does not decide it.
    *
    * Scoped to the caller's own wallets: an address that is not the project's
    * answers `WALLET_NOT_FOUND`.
@@ -245,6 +332,11 @@ export class SweepsService extends BaseService {
    * Write a wallet's auto-sweep policy. Returns the settings as they stand
    * afterwards, so the caller sees what the write resolved to without asking
    * again.
+   *
+   * Inheritance is per field: writing the mode leaves the fee mode inherited.
+   * The four fields that can be written - and so the four names the API's
+   * `fields` mask accepts, which this method fills in for you - are `type_work`,
+   * `threshold_amount_usd`, `fee_mode` and `gas_source`.
    *
    * Refusals are named: `TYPE_WORK_INVALID`, `FEE_MODE_INVALID`,
    * `THRESHOLD_INVALID`, `THRESHOLD_MUST_BE_POSITIVE`,
@@ -263,6 +355,7 @@ export class SweepsService extends BaseService {
       typeWork: 'type_work',
       thresholdAmountUsd: 'threshold_amount_usd',
       feeMode: 'fee_mode',
+      gasSource: 'gas_source',
     };
     for (const [key, wireName] of Object.entries(wireNames)) {
       const value = (policy as Record<string, unknown>)[key];

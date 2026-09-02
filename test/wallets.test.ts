@@ -265,3 +265,85 @@ describe('wallet reads carry the label', () => {
     expect(out.label).toBe('Treasury EU');
   });
 });
+
+describe('wallet pay-in history', () => {
+  // Verbatim from the API reference: the same order records PayIn History
+  // answers with, under the same `items` + `meta` envelope.
+  const page = JSON.stringify({
+    items: [
+      {
+        uuid: '0a1b2c3d-4e5f-6789-abcd-ef0123456789',
+        order_id: 'invoice-1002',
+        status: 'paid',
+        amount_crypto: '10.5',
+        payment_coin: 'USDT',
+        payment_network: 'TRON_MAINNET',
+        to_address: 'TQrY8bYc2yQ8sM8nJ1sZ9c2Zx7L2wq7pQb',
+      },
+      {
+        uuid: '1b2c3d4e-5f60-7890-bcde-f01234567890',
+        order_id: 'invoice-1003',
+        status: 'expired',
+        amount_crypto: '4',
+        payment_coin: 'USDT',
+        payment_network: 'TRON_MAINNET',
+        to_address: 'TQrY8bYc2yQ8sM8nJ1sZ9c2Zx7L2wq7pQb',
+      },
+    ],
+    meta: { page: 1, page_size: 20, total: 2 },
+  });
+
+  it('lists every order that used one deposit address', async () => {
+    const { client, calls } = makeClient(() => new Response(page, { status: 200 }));
+
+    const out = await client.wallets.payInHistory({
+      address: 'TQrY8bYc2yQ8sM8nJ1sZ9c2Zx7L2wq7pQb',
+      dateFrom: '2026-01-01T00:00:00+00:00',
+      dateTo: '2026-02-01T00:00:00+00:00',
+      page: 1,
+      pageSize: 20,
+    });
+
+    expect(firstCall(calls).url).toContain('/v1/wallets/history');
+    expect(sentBody(calls)).toEqual({
+      address: 'TQrY8bYc2yQ8sM8nJ1sZ9c2Zx7L2wq7pQb',
+      date_from: '2026-01-01T00:00:00+00:00',
+      date_to: '2026-02-01T00:00:00+00:00',
+      page: 1,
+      page_size: 20,
+    });
+
+    // A PayIn, not a wallet: the shape is the pay-in history one, reused whole.
+    const [paid, expired] = out.items;
+    if (!paid || !expired) throw new Error('expected two orders');
+    expect(paid.orderId).toBe('invoice-1002');
+    expect(paid.status).toBe('paid');
+    expect(paid.amountCrypto).toBe('10.5');
+    expect(paid.paymentNetwork).toBe('TRON_MAINNET');
+    expect(expired.status).toBe('expired');
+    expect(out.meta).toEqual({ page: 1, pageSize: 20, total: 2 });
+  });
+
+  it('sends the address alone when nothing else is asked for', async () => {
+    const { client, calls } = makeClient(() => new Response(page, { status: 200 }));
+
+    await client.wallets.payInHistory({ address: '0xDeposit' });
+
+    // Unset filters stay off the wire - an empty date is not a date.
+    expect(firstCall(calls).init.body).toBe('{"address":"0xDeposit"}');
+  });
+
+  it('reads an address the project does not own as an empty page, not an error', async () => {
+    const { client } = makeClient(
+      () =>
+        new Response(JSON.stringify({ items: [], meta: { page: 1, page_size: 20, total: 0 } }), {
+          status: 200,
+        }),
+    );
+
+    const out = await client.wallets.payInHistory({ address: '0xSomebodyElses' });
+
+    expect(out.items).toEqual([]);
+    expect(out.meta.total).toBe(0);
+  });
+});

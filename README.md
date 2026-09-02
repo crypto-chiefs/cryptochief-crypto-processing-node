@@ -73,12 +73,12 @@ Both credentials come from the dashboard -> Integration tab.
 | Solana programs | `client.transactions` | `signAnchorCall`, `signSolanaCall` |
 | TON contract calls (Jetton / NFT / text) | `client.transactions` | `jettonTransfer`, `nftTransfer`, `sendTonComment`, `signTonCall` |
 | Accept incoming payments | `client.payIns` | `create`, `selectAsset`, `resetAsset`, `cancel`, `info`, `history`, `waitFor` |
-| Wallet management + RSA decrypt | `client.wallets` | `generate`, `list`, `info`, `freeze`, `rebindMaster`, `setCallbackUrl`, `setLabel`, `decryptPrivateKey` |
+| Wallet management + RSA decrypt | `client.wallets` | `generate`, `list`, `info`, `freeze`, `payInHistory`, `rebindMaster`, `setCallbackUrl`, `setLabel`, `decryptPrivateKey` |
 | Treasury sweeps | `client.sweeps` | `force`, `history`, `walletHistory`, `settings`, `updateSettings` |
 | Withdrawals (read-only) | `client.withdrawals` | `info`, `history` |
 | Static-deposit history | `client.staticDeposits` | `info`, `history` |
-| On-chain queries | `client.blockchain` | `contractsAvailable`, `walletBalance`, `transactionStatus` |
-| Fiat <-> crypto rate quote | `client.currencies` | `fiatToCrypto`, `cryptoToFiat` |
+| On-chain queries | `client.blockchain` | `contractsAvailable`, `contractsList`, `supportedBlockchains`, `walletBalance`, `transactionStatus` |
+| Fiat <-> crypto rate quote | `client.currencies` | `fiatToCrypto`, `cryptoToFiat`, `fiats`, `cryptos` |
 | Billing credits (free of charge) | `client.credits` | `balance`, `topup` |
 
 ## End-to-end example: payout with confirmation
@@ -456,6 +456,104 @@ const s = await client.sweeps.updateSettings({
 Inheritance is per field: overriding the mode leaves the fee mode inherited.
 Pass `null` to stop overriding a field and go back to inheriting it.
 
+The four fields a write can name are `typeWork`, `thresholdAmountUsd`, `feeMode`
+and `gasSource`; the SDK fills in the API's `fields` mask for you, so `null`
+clears exactly one of them and leaves the rest as they were.
+
+**Who pays the network fee for a sweep?**
+The deposit wallet, whenever it can. A wallet already holding enough of the
+chain's native coin pays for its own transfer whatever `feeMode` says - the mode
+only decides who makes up a *shortfall*:
+
+| `feeMode` | Who covers the shortfall |
+| --- | --- |
+| `SweepFeeMode.Client` | Your own master wallet. |
+| `SweepFeeMode.Service` | The platform - and the cost is billed to your API credits. |
+| `SweepFeeMode.Mix` | **The default.** Tries `Client` first, falls back to `Service` when the master wallet cannot cover it. |
+
+So `Service` is not free, and `Mix` is not "front it and reclaim it from the
+sweep": it is a fallback, and where it falls back to costs credits.
+
+**Who pays for the energy a TRON sweep needs?**
+`gasSource`. `SweepGasSource.Native` burns the wallet's own TRX;
+`SweepGasSource.Rented` has the platform supply the energy and bills it to your
+API credits once the transfer is on chain. TRON only - carried and ignored
+elsewhere - and independent of `feeMode`, which answers who covers the network
+fee rather than what is bought.
+
+**Not setting it is not the same as setting `native`.** A wallet that never chose
+one gets the platform default, which is `rented`, so energy is supplied and
+billed without anybody switching it on:
+
+```ts
+// Opt out of rented energy - this has to be explicit.
+await client.sweeps.updateSettings({ address: tronDeposit, gasSource: SweepGasSource.Native });
+
+// What will actually happen is always a concrete value on `effective`.
+const s = await client.sweeps.settings({ address: tronDeposit });
+console.log(s.effective.gasSource);   // 'native' | 'rented' - read this one
+console.log(s.override?.gasSource);   // null = this layer does not decide, i.e. inherited
+
+// Stop overriding it and inherit again.
+await client.sweeps.updateSettings({ address: tronDeposit, gasSource: null });
+```
+
+A `null` in the `override` layer means only that the wallet does not decide the
+field. It is not "switched off", and reading it in place of `effective.gasSource`
+is how a wallet ends up renting energy while its integration believes it burns
+its own TRX.
+
+**How do I find a sweep by transaction hash, or list only the failed ones?**
+`client.sweeps.history({ status, search })`, and the same two filters on
+`client.sweeps.walletHistory({ address, status, search })`. `search` is a
+substring match - the wallet address, the sweep or gas-pump transaction hash and
+the `task_id` on the project-wide history; the hashes and `task_id` on the wallet
+one. Leave `status` off and every status comes back, `SweepStatus.Skipped`
+included, which is why an unfiltered page looks busier than the sweeps that
+actually moved money.
+
+**A payer gives me an address but no order id - which orders used it?**
+`client.wallets.payInHistory({ address })`. It answers with the same order records
+and `meta` envelope as `client.payIns.history(...)`, narrowed to that one deposit
+wallet, which typically served several orders over its life. The address is
+matched case-insensitively, and one that is not your project's yields an empty
+page rather than an error.
+
+**Which assets could we turn on, and which chains is the platform watching?**
+`client.blockchain.contractsList()` is the platform-wide catalogue - every coin
+and token on every network, whatever this project has enabled - in the same row
+shape as `contractsAvailable()`, with `chainFamily` and `isTest` on each row and
+`contract: ''` (never `null`) for a native coin. `client.blockchain.supportedBlockchains()`
+is the infrastructure answer: the chains the block scanner is connected to right
+now, returned as a bare array of `{ name, type }`. Neither is your project's
+catalogue - that is `contractsAvailable()`, and it is the list that governs
+orders, sweeps and payouts.
+
+**Which currencies can I quote a price in?**
+`client.currencies.fiats()` is every fiat the platform can price an order in - a
+bare array of `{ code, name }`, not an `items` envelope. `client.currencies.cryptos()`
+is every crypto ticker it has a rate for against USDT, with `byExchange` mapping
+`binance` / `bybit` / `exmo` / `kucoin` to the tickers each one carries.
+
+```ts
+const fiats = await client.currencies.fiats();          // [{ code: 'SEK', name: 'Swedish Krona' }, ...]
+const { byExchange, quote } = await client.currencies.cryptos();
+console.log(quote, Object.keys(byExchange));            // 'USDT' [ 'binance', 'bybit', ... ]
+```
+
+Both are **rate availability, not payment availability**. A ticker `cryptos()`
+lists can be priced; it does not follow that the platform takes deposits, sweeps
+or payouts in it. Build an asset picker from it and you will offer payers assets
+the order is then refused for - the list that governs orders, sweeps and payouts
+is `client.blockchain.contractsAvailable()`.
+
+An empty catalogue arrives from these three endpoints - `fiats()`,
+`supportedBlockchains()` and `cryptos()` - as JSON `null` rather than `[]`. The
+SDK normalises it at every level - the whole body, `tickers`, `byExchange`, and
+one exchange's own list inside that map - so a method typed as a list always
+resolves to one: iterating, mapping or destructuring the result is safe on an
+empty answer rather than a `TypeError`.
+
 **How do I re-point a deposit wallet at a different master wallet?**
 `client.wallets.rebindMaster(address, newMaster)`. It moves no money - it decides
 where the *next* sweep settles, queued sweeps included; whatever was already
@@ -480,11 +578,19 @@ the name, and the SDK sends it as one. It reads back as `label: null` - a wallet
 name or it has none, and an empty string is never what you get.
 
 **How do I know a sweep actually settled?**
-Check `status`. `SweepStatus.Broadcasted` means the transaction is out and not
-yet confirmed; `SweepStatus.Completed` means confirmed, with `sweepConfirmations`
-and `completedAt` filled in. Earlier platform versions reported `completed` at
-broadcast, so a sweep could read as settled while its transaction was still
-unconfirmed.
+Check `status` together with `sweepConfirmations`. `SweepStatus.Broadcasted`
+means the transaction is out and not yet confirmed; `SweepStatus.Completed` plus
+`sweepConfirmations` above zero means the chain confirmed it. Earlier platform
+versions reported `completed` at broadcast, so a sweep could read as settled
+while its transaction was still unconfirmed - the confirmation count separates
+the two.
+
+**Not `completedAt`.** It is stamped when the sweep reached a *terminal outcome*,
+failures included - a `failed` and a `skipped` sweep both carry one - so its
+presence says the sweep finished, not that it succeeded. Book a sweep as money
+received off `completedAt` and a failed one is booked as money received. The
+moment the chain was seen holding the funds arrives separately, as `confirmedAt`
+on the `sweep.confirmed` webhook.
 
 **How do I keep test payments off real chains?**
 Set `environment` on `payIns.create` to `Environment.Testnet` or

@@ -1,5 +1,6 @@
 import type { Chain, ChainFamily } from '../chains';
 import type { RequestOptions } from '../client';
+import type { PayInHistoryResponse } from './payins';
 import { BaseService } from './base';
 
 /** Wallet role. */
@@ -74,6 +75,26 @@ export interface ListWalletsResponse {
   items: Wallet[];
 }
 
+/**
+ * Filter for {@link WalletsService.payInHistory}. Only `address` is required;
+ * omitted fields are not sent.
+ */
+export interface WalletPayInHistoryQuery {
+  /**
+   * The deposit address to list orders for. Matched case-insensitively, so
+   * either spelling of an EVM address works.
+   */
+  address: string;
+  /** Created from, as `YYYY-MM-DDTHH:MM:SS+HH:MM`. */
+  dateFrom?: string;
+  /** Created to, same format. */
+  dateTo?: string;
+  /** 1-based page number. Default `1`. */
+  page?: number;
+  /** Orders per page. Default `20`, maximum `100`. */
+  pageSize?: number;
+}
+
 /** Wallet management + local RSA private-key decryption. */
 export class WalletsService extends BaseService {
   /** Provision a new wallet on the requested chain family. */
@@ -94,6 +115,22 @@ export class WalletsService extends BaseService {
   /** Toggle the frozen flag - the response's `frozen` field is the new state. */
   freeze(address: string, opts?: RequestOptions): Promise<Wallet> {
     return this.call('/v1/wallets/freeze', { address }, opts);
+  }
+
+  /**
+   * Every pay-in that used one deposit address - the same order records
+   * `client.payIns.history()` returns, in the same
+   * {@link PayInHistoryResponse} shape, narrowed to a single wallet.
+   *
+   * A deposit wallet serves several orders over its lifetime, and this is the
+   * list of them: the answer when a payer says they sent funds and you have the
+   * address but not the order.
+   *
+   * Scoped to your own project - an address you do not own yields an empty
+   * page, not an error.
+   */
+  payInHistory(query: WalletPayInHistoryQuery, opts?: RequestOptions): Promise<PayInHistoryResponse> {
+    return this.call('/v1/wallets/history', query, opts);
   }
 
   /**
