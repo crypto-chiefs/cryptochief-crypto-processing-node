@@ -26,7 +26,8 @@ export interface ConvertResponse {
 
 /**
  * Fiat <-> crypto rate calculator. These quote rates only - they do NOT move
- * funds (a swap is a payout with `autoConvert: true`).
+ * funds, and there is no swap endpoint to move them with: `autoConvert` on a
+ * payout is refused by the platform with `AUTO_CONVERT_NOT_IMPLEMENTED`.
  */
 export class CurrenciesService extends BaseService {
   /** Quote how much crypto the given fiat amount is worth. */

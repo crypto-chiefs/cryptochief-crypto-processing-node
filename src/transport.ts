@@ -9,8 +9,21 @@ interface ErrorEnvelope {
 
 /**
  * Parse a non-2xx response body into an {@link ApiError} with a stable code.
- * The code is `msg || error || HTTP_<status>`, and the message prefers `msg`
- * when it differs from `error`.
+ *
+ * The API answers a failure in one of two envelope shapes, and the machine code
+ * sits in a different field in each:
+ *
+ * - a refusal the gateway decided itself carries the code in `error` and a
+ *   human sentence in `msg` —
+ *   `{"error":"LABEL_TOO_LONG","msg":"label is longer than 255 characters"}`;
+ * - a refusal relayed from an upstream service marks `error` as
+ *   `SERVICE_ERROR` and carries the code in `msg` —
+ *   `{"error":"SERVICE_ERROR","msg":"wallet_not_found"}`.
+ *
+ * So the code is `error` unless `error` is the generic `SERVICE_ERROR` marker,
+ * in which case it is `msg`; an empty result falls back to `error` and then to
+ * `HTTP_<status>`. The message prefers `msg` — the sentence, when there is one —
+ * and falls back to `error`. The untouched body stays on {@link ApiError.raw}.
  */
 export function parseApiError(status: number, body: string): ApiError {
   let env: ErrorEnvelope = {};
@@ -20,9 +33,9 @@ export function parseApiError(status: number, body: string): ApiError {
   } catch {
     // Non-JSON error body - fall back to HTTP_<status>.
   }
-  const code = env.msg || env.error || `HTTP_${status}`;
-  let message = env.error ?? '';
-  if (env.msg && env.msg !== env.error) message = env.msg;
+  const gatewayCode = env.error && env.error !== ErrorCode.ServiceError ? env.error : env.msg;
+  const code = gatewayCode || env.error || `HTTP_${status}`;
+  const message = env.msg || env.error || '';
   return new ApiError({ httpStatus: status, code, message, raw: body });
 }
 

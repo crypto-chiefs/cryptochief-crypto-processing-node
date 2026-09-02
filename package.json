@@ -1,6 +1,6 @@
 {
   "name": "@cryptochiefs/cryptochief-crypto-processing-node",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Official Node.js and TypeScript SDK for the Crypto Chief crypto payment gateway and crypto processing API. Accept crypto payments, send single and mass crypto payouts, sign on-chain transactions and smart-contract calls, manage wallets, convert fiat to crypto, and verify webhooks across Ethereum, BNB Smart Chain, Polygon, Tron, TON, Solana, Bitcoin, XRP and 20+ blockchains. USDT and USDC stablecoin support with bigint precision; ships ESM and CommonJS with full type definitions.",
   "keywords": [
     "crypto",

@@ -21,9 +21,12 @@ export class CryptoChiefError extends Error {
 /**
  * Typed form of a Crypto Chief error response.
  *
- * The API returns either `{"error":"SERVICE_ERROR","msg":"<CODE>","ok":false}`
- * (then `code` is `<CODE>`) or `{"error":"<CODE>","ok":false}` (then `code` is
- * that value). Either way {@link code} is the stable identifier to switch on:
+ * The API returns either `{"error":"<CODE>","msg":"<sentence>","ok":false}` —
+ * a refusal the gateway decided itself, code in `error` — or
+ * `{"error":"SERVICE_ERROR","msg":"<CODE>","ok":false}` — a refusal relayed
+ * from an upstream service, code in `msg`. Both resolve to {@link code}, the
+ * stable identifier to switch on; {@link message} carries the human sentence
+ * when the response has one, and {@link raw} the whole body:
  *
  * ```ts
  * try {
@@ -38,9 +41,13 @@ export class CryptoChiefError extends Error {
 export class ApiError extends CryptoChiefError {
   /** HTTP status code returned by the server (0 for transport-level errors). */
   readonly httpStatus: number;
-  /** Stable string identifier callers should branch on. */
+  /**
+   * Stable string identifier callers should branch on - resolved from whichever
+   * envelope field carries the machine code, so the {@link ErrorCode} constants
+   * match whichever shape the API used.
+   */
   readonly code: string;
-  /** Raw response body, when the client could not classify the failure. */
+  /** Raw response body, verbatim. */
   readonly raw?: string;
 
   constructor(params: { httpStatus?: number; code: string; message?: string; raw?: string }) {

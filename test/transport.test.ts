@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { CryptoChiefClient, type ClientOptions } from '../src/client';
 import { ApiError, ErrorCode, isApiError } from '../src/errors';
+import { parseApiError } from '../src/transport';
 import { canonicalJSON, sign } from '../src/sign';
 
 interface Captured {
@@ -73,6 +74,66 @@ describe('transport', () => {
       expect(isApiError(err, ErrorCode.InsufficientFunds)).toBe(true);
       expect((err as ApiError).httpStatus).toBe(400);
     }
+  });
+
+  it('takes the code from `error` when the gateway itself refused', async () => {
+    const body = JSON.stringify({ ok: false, error: 'LABEL_TOO_LONG', msg: 'label is longer than 255 characters' });
+    const { client } = makeClient(() => new Response(body, { status: 400 }));
+    try {
+      await client.wallets.setLabel('0xAbC', 'x'.repeat(256));
+      throw new Error('expected rejection');
+    } catch (err) {
+      // The constant this SDK publishes has to match - it is the whole point of publishing it.
+      expect(isApiError(err, ErrorCode.LabelTooLong)).toBe(true);
+      const e = err as ApiError;
+      expect(e.code).toBe(ErrorCode.LabelTooLong);
+      expect(e.httpStatus).toBe(400);
+      // The sentence is still reachable, and the body is untouched.
+      expect(e.message).toContain('label is longer than 255 characters');
+      expect(e.raw).toBe(body);
+    }
+  });
+
+  it('takes the code from `msg` when SERVICE_ERROR relays an upstream refusal', async () => {
+    const body = JSON.stringify({ ok: false, error: 'SERVICE_ERROR', msg: 'wallet_not_found' });
+    const { client } = makeClient(() => new Response(body, { status: 404 }));
+    try {
+      await client.wallets.info('0xAbC');
+      throw new Error('expected rejection');
+    } catch (err) {
+      const e = err as ApiError;
+      expect(isApiError(e)).toBe(true);
+      expect(e.code).toBe('wallet_not_found');
+      expect(e.httpStatus).toBe(404);
+      expect(e.raw).toBe(body);
+    }
+  });
+
+  it('resolves the code from either envelope shape', () => {
+    // Gateway-decided refusal: code in `error`, sentence in `msg`.
+    const gw = parseApiError(400, JSON.stringify({ ok: false, error: 'LABEL_TOO_LONG', msg: 'label is longer than 255 characters' }));
+    expect(gw.code).toBe(ErrorCode.LabelTooLong);
+    expect(gw.message).toContain('label is longer than 255 characters');
+
+    // Relayed refusal: `error` is the generic marker, code in `msg`.
+    expect(parseApiError(400, JSON.stringify({ ok: false, error: 'SERVICE_ERROR', msg: 'INSUFFICIENT_FUNDS' })).code).toBe(
+      ErrorCode.InsufficientFunds,
+    );
+    expect(parseApiError(404, JSON.stringify({ ok: false, error: 'SERVICE_ERROR', msg: 'wallet_not_found' })).code).toBe('wallet_not_found');
+
+    // Other gateway codes, with and without a sentence beside them.
+    expect(parseApiError(402, JSON.stringify({ ok: false, error: 'INSUFFICIENT_CREDITS', msg: 'not enough credits' })).code).toBe(
+      ErrorCode.InsufficientCredits,
+    );
+    expect(parseApiError(400, JSON.stringify({ ok: false, error: 'INVALID_PARAMS' })).code).toBe(ErrorCode.InvalidParams);
+
+    // SERVICE_ERROR with nothing in `msg` is all the API said - keep it.
+    expect(parseApiError(500, JSON.stringify({ ok: false, error: 'SERVICE_ERROR' })).code).toBe(ErrorCode.ServiceError);
+
+    // Empty and non-JSON bodies fall back to the status.
+    expect(parseApiError(502, '{}').code).toBe('HTTP_502');
+    expect(parseApiError(502, '<html>bad gateway</html>').code).toBe('HTTP_502');
+    expect(parseApiError(502, '<html>bad gateway</html>').raw).toBe('<html>bad gateway</html>');
   });
 
   it('retries 5xx then succeeds', async () => {
