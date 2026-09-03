@@ -11,12 +11,13 @@ import { WalletsService } from './services/wallets';
 import { SweepsService } from './services/sweeps';
 import { WithdrawalsService } from './services/withdrawals';
 import { StaticDepositsService } from './services/static-deposits';
+import { WebhooksService } from './services/webhooks';
 import { BlockchainService } from './services/blockchain';
 import { CurrenciesService } from './services/currencies';
 import { CreditsService } from './services/credits';
 
 /** SDK version, reported in the default `User-Agent`. */
-export const VERSION = '0.7.0';
+export const VERSION = '0.8.0';
 
 /** Production processing API endpoint. Test-mode projects share this host. */
 export const DEFAULT_BASE_URL = 'https://api-processing.crypto-chief.com';
@@ -112,6 +113,7 @@ export class CryptoChiefClient {
   readonly blockchain: BlockchainService;
   readonly currencies: CurrenciesService;
   readonly credits: CreditsService;
+  readonly webhooks: WebhooksService;
 
   constructor(options: ClientOptions) {
     if (!options || !options.merchantId) throw new CryptoChiefError('cryptochief: merchantId is required');
@@ -147,6 +149,7 @@ export class CryptoChiefClient {
     this.blockchain = new BlockchainService(this);
     this.currencies = new CurrenciesService(this);
     this.credits = new CreditsService(this);
+    this.webhooks = new WebhooksService(this);
   }
 
   /**

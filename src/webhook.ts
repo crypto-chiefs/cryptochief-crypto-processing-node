@@ -18,6 +18,15 @@ export class WebhookSignatureError extends CryptoChiefError {
 /** Case-insensitive header name carrying the webhook signature. */
 export const WEBHOOK_HEADER = 'Signature';
 
+/**
+ * Header carrying the delivery's uuid on every webhook the platform sends.
+ * Constant across every attempt and resend of one delivery - use it as your
+ * receiver's idempotency key - and the argument `client.webhooks.info()` /
+ * `resend()` take. Keep it when you log an incoming webhook: there is no
+ * other way to name a delivery later.
+ */
+export const WEBHOOK_DELIVERY_HEADER = 'X-Webhook-Delivery';
+
 /** IP addresses Crypto Chief delivers webhooks from - whitelist for defense in depth. */
 export const WEBHOOK_SENDER_IPS = ['164.90.231.203', '104.248.248.64'] as const;
 

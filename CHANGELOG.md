@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.0] — 2026-09-03
+
+The platform's outbound webhooks become something you can read and re-fire, and every
+webhook now carries the id that makes that possible.
+
+- `client.webhooks.info(uuid)` — signed `POST /v1/webhooks/info`. One delivery the platform made to your endpoint: its status, every attempt with the HTTP status, duration and **the body your endpoint answered** (capped, `responseTruncated` says if it was cut), and the payload that was sent. `null` on a field means "not recorded" — an attempt nothing answered has `httpStatus: null` and the transport error in `error`
+- `client.webhooks.resend(uuid)` — signed `POST /v1/webhooks/resend`, re-fires one delivery right now. On this platform the resend is **synchronous**: the POST happens before the answer, so `queued: true` arrives with `status` already `delivered` or `failed` for that attempt
+- `client.webhooks.resendStaticDeposit(depositUuid)` — signed `POST /v1/static-deposits/resend`, re-fires the **newest** webhook of a static deposit by the deposit's own uuid, for when you hold the deposit and not the delivery. Older events of the deposit are superseded and are not resent. Same routes, bodies and refusal codes as the white-label platform, so one integration runs against either
+- `WEBHOOK_DELIVERY_HEADER` (`X-Webhook-Delivery`) — the delivery uuid now rides on every webhook. Constant across attempts and resends of one delivery, so it doubles as your receiver's idempotency key, and it is the argument the new methods take. **Keep it when you log a webhook** — the API has no listing of deliveries, so it is the only way to name one afterwards
+- `ErrorCode.DeliverySuperseded`, `DeliveryInFlight`, `ResendTooSoon`, `NoDeliveries`, `NotFound`. A superseded delivery — one with a newer event for the same object — cannot be resent: re-sending `invoice.in_mempool` after `invoice.paid` would tell your system the order went backwards. The `ApiError` names the newer event; resend that
+- A successful manual delivery is billed as `/v1/webhook/resend`; a refused one is not. `info()` is priced like the other reads
+
 ## [0.7.0] — 2026-09-02
 
 Five reads the API always answered and this SDK had no method for, two filters

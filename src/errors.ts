@@ -84,6 +84,16 @@ export const ErrorCode = {
   Unauthorized: 'UNAUTHORIZED',
   UrlCallbackRequired: 'URL_CALLBACK_REQUIRED',
   LabelTooLong: 'LABEL_TOO_LONG',
+  /** The object does not exist OR is not this project's - deliberately indistinguishable. */
+  NotFound: 'NOT_FOUND',
+  /** Webhook resend: a newer event exists for the same object; only the latest may be resent. Permanent. */
+  DeliverySuperseded: 'DELIVERY_SUPERSEDED',
+  /** Webhook resend: a worker holds the delivery, or it is already scheduled for a retry. */
+  DeliveryInFlight: 'DELIVERY_IN_FLIGHT',
+  /** Webhook resend: resent under a minute ago (HTTP 429, Retry-After). */
+  ResendTooSoon: 'RESEND_TOO_SOON',
+  /** Static-deposit resend: no webhook was ever queued - the wallet had no callback_url. */
+  NoDeliveries: 'NO_DELIVERIES',
   BatchEmpty: 'BATCH_EMPTY',
   BatchTooLarge: 'BATCH_TOO_LARGE',
   BatchDuplicateOrderId: 'BATCH_DUPLICATE_ORDER_ID',
