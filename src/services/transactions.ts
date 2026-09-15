@@ -29,6 +29,7 @@ export type TxType = (typeof TxType)[keyof typeof TxType];
 export const TxStatus = {
   Signed: 'signed',
   Broadcasting: 'broadcasting',
+  /** In the network, below `requiredConfirmations`. */
   Broadcasted: 'broadcasted',
   Confirmed: 'confirmed',
   Failed: 'failed',
@@ -113,6 +114,10 @@ export interface TransactionInfo {
   nonce?: number;
   actualFee?: string;
   actualFeeFiat?: string;
+  /** Always sent. `0` until the transaction is in a block, then grows while `broadcasted`. */
+  confirmations?: number;
+  /** Always sent. The transaction becomes `confirmed` once `confirmations` reaches it. */
+  requiredConfirmations?: number;
   createdAt?: string;
   updatedAt?: string;
   error?: string;
@@ -269,7 +274,11 @@ export class TransactionsService extends BaseService {
     return this.call('/v1/transaction/history', query, opts);
   }
 
-  /** Poll `info` until the transaction reaches a terminal state (or timeout). */
+  /**
+   * Poll `info` until the transaction reaches a terminal state or `timeoutMs`
+   * passes. `confirmed` comes at `requiredConfirmations`; a `PollTimeoutError`
+   * does not mean the transaction failed: read `lastState.status`.
+   */
   waitFor(uuid: string, opts: PollOptions = {}): Promise<TransactionInfo> {
     return waitForTerminal(
       (signal) => this.info(uuid, { signal }),

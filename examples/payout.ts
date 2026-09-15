@@ -34,8 +34,15 @@ try {
   });
   console.log(`queued: uuid=${exec.uuid} order_id=${exec.orderId}`);
 
-  const final = await client.payouts.waitFor(exec.uuid, { intervalMs: 4000, timeoutMs: 4 * 60_000 });
-  console.log(`terminal: status=${final.status} txid=${final.txid ?? '-'}`);
+  // `paid` waits for the network's finality depth (32 blocks on Sepolia).
+  const final = await client.payouts.waitFor(exec.uuid, { intervalMs: 4000, timeoutMs: 15 * 60_000 });
+  console.log(
+    `terminal: status=${final.status} ` +
+      `confirmations=${final.confirmations ?? '-'}/${final.requiredConfirmations ?? '-'}`,
+  );
+  for (const s of final.sources ?? []) {
+    console.log(`  source ${s.address}: txid=${s.txid ?? '-'} confirmations=${s.confirmations ?? '-'}`);
+  }
 } catch (err) {
   if (err instanceof ApiError && err.code === ErrorCode.InsufficientFunds) {
     console.error('not enough balance - top up and retry');

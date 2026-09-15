@@ -41,10 +41,9 @@ export interface SweepWalletHistoryQuery extends SweepHistoryQuery {
  * Sweep status.
  *
  * A sweep is broadcast first and confirmed after: `Broadcasted` means the
- * transaction is out and not yet confirmed, `Completed` means the chain
- * confirmed it. The platform used to report `completed` at broadcast, so a
- * sweep could read as settled while its transaction was still unconfirmed or
- * had been dropped.
+ * transaction is out and `sweepConfirmations` is below `requiredConfirmations`,
+ * `Completed` means it reached `requiredConfirmations`. On older records
+ * `Completed` can have `sweepConfirmations` 0: not settled.
  *
  * `Skipped` is a sweep the platform decided against - almost always a balance
  * below the wallet's threshold. A normal outcome, not a failure.
@@ -73,17 +72,19 @@ export interface Sweep {
   /** What triggered this sweep: momentum, threshold or force. */
   typeWork?: string;
 
-  /** Confirmations seen on the sweep transaction. `0` until it is mined. */
-  sweepConfirmations?: number;
   /**
-   * When the sweep reached a TERMINAL OUTCOME - failures included. The sweeper
-   * stamps it on `failed` and `skipped` exactly as it does on `completed`, so
-   * its presence says the sweep finished, not that it succeeded.
-   *
-   * **Do not read it as settlement.** For that, check `sweepConfirmations` is
-   * above zero, or take `confirmedAt` off the `sweep.confirmed` webhook - which
-   * carries a separate field precisely because this one does not answer the
-   * question.
+   * Confirmations seen on the sweep transaction. `0` until it is mined, then
+   * grows while the sweep is `broadcasted`. Settled: `status === SweepStatus.Completed`
+   * and above zero; above zero alone is not settlement.
+   */
+  sweepConfirmations?: number;
+  /** The network's finality depth: the sweep is `completed` once `sweepConfirmations` reaches it. */
+  requiredConfirmations?: number;
+  /**
+   * When the sweep was broadcast, or reached `waiting_gas`, `failed` or `skipped`.
+   * Present on `broadcasted` sweeps too, so it does not mean settled: for that check
+   * `status === SweepStatus.Completed` with `sweepConfirmations` above zero, or
+   * `confirmedAt` on `sweep.confirmed`.
    */
   completedAt?: string;
 

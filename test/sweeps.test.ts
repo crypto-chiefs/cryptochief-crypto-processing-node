@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { CryptoChiefClient, type ClientOptions } from '../src/client';
-import { SweepFeeMode, SweepGasSource, SweepPolicyMode, SweepStatus } from '../src/services/sweeps';
+import { SweepFeeMode, SweepGasSource, SweepPolicyMode, SweepStatus, type Sweep } from '../src/services/sweeps';
+
+// The documented settlement rule.
+const isSettled = (s: Sweep) => s.status === SweepStatus.Completed && (s.sweepConfirmations ?? 0) > 0;
 
 interface Captured {
   url: string;
@@ -110,6 +113,8 @@ describe('sweep history', () => {
                 wallet_address: '0xa',
                 chain: 'ETH_MAINNET',
                 sweep_confirmations: 2,
+                required_confirmations: 32,
+                completed_at: '2026-08-28T09:58:00Z',
                 type_work: 'threshold',
                 total_fee_usd: '1.20',
               },
@@ -118,7 +123,8 @@ describe('sweep history', () => {
                 status: 'completed',
                 wallet_address: '0xb',
                 chain: 'ETH_MAINNET',
-                sweep_confirmations: 12,
+                sweep_confirmations: 32,
+                required_confirmations: 32,
                 completed_at: '2026-08-28T10:00:00Z',
                 real_sweep_fee_usd: '0.98',
               },
@@ -134,20 +140,25 @@ describe('sweep history', () => {
     const [inFlight, settled] = out.items;
     if (!inFlight || !settled) throw new Error('expected two sweeps');
     expect(inFlight.status).toBe(SweepStatus.Broadcasted);
+    // In a block, short of the depth: still broadcasted.
     expect(inFlight.sweepConfirmations).toBe(2);
-    // Still in flight: there is no settlement moment to report yet.
-    expect(inFlight.completedAt).toBeUndefined();
+    expect(inFlight.requiredConfirmations).toBe(32);
+    // completed_at is the broadcast time: present while still broadcasted.
+    expect(inFlight.completedAt).toBe('2026-08-28T09:58:00Z');
+    expect(out.items.filter((s) => s.completedAt !== undefined)).toHaveLength(2);
+    expect(out.items.filter(isSettled).map((s) => s.taskId)).toEqual(['t2']);
     expect(inFlight.typeWork).toBe('threshold');
     expect(inFlight.totalFeeUsd).toBe('1.20');
     expect(settled.status).toBe(SweepStatus.Completed);
+    expect(settled.sweepConfirmations).toBe(32);
+    expect(settled.requiredConfirmations).toBe(32);
     expect(settled.completedAt).toBe('2026-08-28T10:00:00Z');
     expect(settled.realSweepFeeUsd).toBe('0.98');
   });
 
   it('carries completedAt on a failed sweep - presence is not settlement', async () => {
-    // The sweeper stamps completed_at at every terminal outcome, failures
-    // among them. Reading its presence as "the money landed" books a failed
-    // sweep as money received, which is why this fixture exists.
+    // The sweeper stamps completed_at at broadcast and on failed and skipped
+    // sweeps. Its presence says nothing about settlement.
     const { client } = makeClient(
       () =>
         new Response(
@@ -191,9 +202,89 @@ describe('sweep history', () => {
     const settledByCompletedAt = out.items.filter((s) => s.completedAt !== undefined);
     expect(settledByCompletedAt).toHaveLength(2);
 
-    // The right one: confirmations above zero, or confirmedAt off the webhook.
-    const actuallySettled = out.items.filter((s) => (s.sweepConfirmations ?? 0) > 0);
+    // The right one: status completed with confirmations above zero, or confirmedAt off the webhook.
+    const actuallySettled = out.items.filter(isSettled);
     expect(actuallySettled).toEqual([]);
+  });
+
+  it('does not read confirmations above zero as settlement', async () => {
+    // A sweep waiting for finality climbs 1, 2, 3... while still broadcasted.
+    // "Above zero" alone books three sweeps on these rows as money received
+    // when one has settled.
+    const row = (taskId: string, status: string, confirmations: number) => ({
+      task_id: taskId,
+      status,
+      wallet_address: 'TQrY8bYc2yQ8sM8nJ1sZ9c2Zx7L2wq7pQb',
+      chain: 'TRON_MAINNET',
+      sweep_confirmations: confirmations,
+      required_confirmations: 20,
+    });
+    const { client } = makeClient(
+      () =>
+        new Response(
+          JSON.stringify({
+            items: [row('c1', 'broadcasted', 1), row('c2', 'broadcasted', 19), row('c3', 'completed', 20)],
+            meta: { total: 3, page: 1, page_size: 20 },
+          }),
+          { status: 200 },
+        ),
+    );
+
+    const out = await client.sweeps.history();
+
+    const aboveZero = out.items.filter((s) => (s.sweepConfirmations ?? 0) > 0);
+    expect(aboveZero.map((s) => s.taskId)).toEqual(['c1', 'c2', 'c3']);
+
+    const settled = out.items.filter(isSettled);
+    expect(settled.map((s) => s.taskId)).toEqual(['c3']);
+
+    const atDepth = out.items.filter((s) => (s.sweepConfirmations ?? 0) >= (s.requiredConfirmations ?? 1));
+    expect(atDepth.map((s) => s.taskId)).toEqual(['c3']);
+  });
+
+  it('does not read status completed with zero confirmations as settlement', async () => {
+    // An older record: completed, but the sweep was never observed on chain.
+    const { client } = makeClient(
+      () =>
+        new Response(
+          JSON.stringify({
+            items: [
+              {
+                task_id: 'c4',
+                status: 'completed',
+                wallet_address: '0xe',
+                chain: 'ETH_MAINNET',
+                sweep_confirmations: 0,
+                required_confirmations: 32,
+                completed_at: '2026-08-01T10:00:00Z',
+              },
+              {
+                task_id: 'c5',
+                status: 'completed',
+                wallet_address: '0xf',
+                chain: 'ETH_MAINNET',
+                sweep_confirmations: 32,
+                required_confirmations: 32,
+                completed_at: '2026-08-28T10:00:00Z',
+              },
+            ],
+            meta: { total: 2, page: 1, page_size: 20 },
+          }),
+          { status: 200 },
+        ),
+    );
+
+    const out = await client.sweeps.history({ status: SweepStatus.Completed });
+
+    const [old] = out.items;
+    expect(old!.status).toBe(SweepStatus.Completed);
+    expect(old!.sweepConfirmations).toBe(0);
+    expect(old!.requiredConfirmations).toBe(32);
+
+    const byStatus = out.items.filter((s) => s.status === SweepStatus.Completed);
+    expect(byStatus.map((s) => s.taskId)).toEqual(['c4', 'c5']);
+
+    expect(out.items.filter(isSettled).map((s) => s.taskId)).toEqual(['c5']);
   });
 });
 

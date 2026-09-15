@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.9.0] — 2026-09-15
+
+- **Breaking:** `PayoutInfo.network`, `coin`, `amount`, `PayoutFeeInfo.estimatedFiat`, `estimatedCoin` and `PayoutSource.amount` are optional; `PayoutSource.amountCrypto` is required; `payouts.waitFor` default timeout is 90 minutes
+- `requiredConfirmations` on `Sweep`, `SweepWebhookEvent`, `PayoutInfo`, `PayoutWebhookEvent`, `TransactionInfo`, `TransactionWebhookEvent` and `Withdrawal`: the depth at which the status becomes `paid`, `confirmed` or `completed`
+- `confirmations` on `PayoutInfo` (lowest among `sources`), `PayoutSource`, `PayoutServiceOperation`, `PayoutWebhookEvent`, `TransactionInfo`, `TransactionWebhookEvent` and `Withdrawal`
+- `PayoutStatus` gained `Refueling`, `RefuelConfirmed`, `Sending`, `Broadcasting`, `InMempool`, `ConfirmCheck`, and is exported as a type
+- `PayoutInfo` gained `userId`, `amountRequested`, `amountToReceive`, `feeInfo`, `serviceOperations`, `completedAt`
+- `PayoutSource` gained `amountCrypto`, `network`, `needRefuel`, `refuelAmount`, `estimatedFee`, `estimatedFeeFiat`, `feePaid`, `feePaidFiat`, `txid`
+- `PayoutServiceOperation` type; `PayoutInfo.serviceOperations` and `PayoutWebhookEvent.serviceOperations` are `PayoutServiceOperation[]`, `PayoutWebhookEvent.sources` is `PayoutSource[]`
+- `PayoutFeeInfo` gained `limitFiat`, `limitCurrency`, `totalFeePaidFiat`
+- `WithdrawalStatus` and `isWithdrawalTerminal()`
+- `Withdrawal` gained `needRefuel`, `refuelTxHash`, `refuelStatus`, `errorReason`, `estimatedFeeFiat`, `actualFeeFiat`, `feeMode`, `completedAt`
+- Deprecated, not sent by the API: `PayoutInfo.network`, `coin`, `amount`, `txid`, `urlCallback`, `updatedAt`, `error`; `PayoutSource.amount`; `PayoutFeeInfo.estimatedCoin`, `estimatedAsset`; `Withdrawal.contract`, `amountFiat`, `updatedAt`, `confirmedAt`, `error`
+- Payout transaction hashes are in `PayoutInfo.sources[].txid`
+- `payouts.waitFor` without `timeoutMs` waits 90 minutes; other `waitFor` methods wait 10 minutes
+- `PollTimeoutError` from `payouts.waitFor` does not mean the payout failed: read `lastState.status`, do not resubmit
+- A sweep is settled when `status` is `SweepStatus.Completed` and `sweepConfirmations` is above zero, or on `sweep.confirmed`; `sweepConfirmations` above zero alone is not settlement
+- `Sweep.completedAt` is the broadcast time, or the time of `waiting_gas`, `failed` or `skipped`
+- `examples/withdrawal-status.ts`
+
 ## [0.8.0] — 2026-09-03
 
 The platform's outbound webhooks become something you can read and re-fire, and every

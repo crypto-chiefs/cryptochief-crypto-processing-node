@@ -17,7 +17,7 @@ import { CurrenciesService } from './services/currencies';
 import { CreditsService } from './services/credits';
 
 /** SDK version, reported in the default `User-Agent`. */
-export const VERSION = '0.8.0';
+export const VERSION = '0.9.0';
 
 /** Production processing API endpoint. Test-mode projects share this host. */
 export const DEFAULT_BASE_URL = 'https://api-processing.crypto-chief.com';

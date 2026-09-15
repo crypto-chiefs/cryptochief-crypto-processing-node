@@ -29,10 +29,13 @@ const res = await client.payouts.batchExecute({ items, urlCallback: 'https://exa
 console.log(`batch ${res.batchUuid ?? '-'}: accepted=${res.accepted} rejected=${res.rejected}`);
 
 const accepted = res.items.filter((it) => it.uuid);
+// `paid` waits for the network's finality depth (32 blocks on Sepolia).
 const finals = await Promise.all(
-  accepted.map((it) => client.payouts.waitFor(it.uuid!, { intervalMs: 4000, timeoutMs: 4 * 60_000 })),
+  accepted.map((it) => client.payouts.waitFor(it.uuid!, { intervalMs: 4000, timeoutMs: 15 * 60_000 })),
 );
-for (const f of finals) console.log(`  ${f.orderId}: ${f.status} ${f.txid ?? ''}`);
+for (const f of finals) {
+  console.log(`  ${f.orderId}: ${f.status} ${(f.sources ?? []).map((s) => s.txid).filter(Boolean).join(',')}`);
+}
 
 for (const it of res.items.filter((x) => x.error)) {
   console.log(`  rejected ${it.orderId}: ${it.error}`);

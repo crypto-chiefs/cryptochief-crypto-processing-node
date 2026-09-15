@@ -5,7 +5,8 @@ import { canonicalJSON, sign } from './sign';
 import { fromWire } from './case';
 import type { Chain, ChainFamily } from './chains';
 import type { PayInMode } from './services/payins';
-import type { TxType } from './services/transactions';
+import type { PayoutInfo, PayoutServiceOperation, PayoutSource } from './services/payouts';
+import type { TransactionInfo, TxType } from './services/transactions';
 
 /** Thrown when a webhook signature does not match the body. */
 export class WebhookSignatureError extends CryptoChiefError {
@@ -158,7 +159,10 @@ function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
 
 // -- Typed event payloads -----------------------------------------------------
 
-/** Payout webhook. Fires only on terminal status: `payout.paid` / `payout.system_fail`. */
+/**
+ * Payout webhook. Fires only on terminal status: `payout.paid` / `payout.system_fail`.
+ * `payout.paid` is sent once every source reaches `requiredConfirmations`.
+ */
 export interface PayoutWebhookEvent {
   event: string;
   uuid: string;
@@ -169,8 +173,12 @@ export interface PayoutWebhookEvent {
   amountToReceive?: string;
   toAddress?: string;
   feeInfo?: Record<string, unknown>;
-  sources?: unknown;
-  serviceOperations?: unknown;
+  sources?: PayoutSource[];
+  serviceOperations?: PayoutServiceOperation[];
+  /** Lowest confirmation count among `sources`; see {@link PayoutInfo.confirmations}. */
+  confirmations?: number;
+  /** The network's finality depth; see {@link PayoutInfo.requiredConfirmations}. */
+  requiredConfirmations?: number;
   createdAt?: string;
   completedAt?: string;
   errorReason?: string;
@@ -189,6 +197,10 @@ export interface TransactionWebhookEvent {
   value?: string;
   contract?: string;
   txHash?: string;
+  /** See {@link TransactionInfo.confirmations}. */
+  confirmations?: number;
+  /** See {@link TransactionInfo.requiredConfirmations}. */
+  requiredConfirmations?: number;
   createdAt?: string;
   completedAt?: string;
   errorReason?: string;
@@ -249,8 +261,9 @@ export const SWEEP_EVENT_CONFIRMED = 'sweep.confirmed';
 
 /**
  * Payload on `sweep.confirmed`: funds that arrived on one of your deposit
- * wallets have been swept to your master wallet AND the sweep transaction is
- * confirmed on chain.
+ * wallets have been swept to your master wallet AND the sweep transaction has
+ * reached the network's finality depth. Sent once, when the sweep turns
+ * `completed`.
  *
  * A `static_deposit.paid` tells you a customer paid you. This tells you the
  * money has finished moving into your own custody - until it fires, the balance
@@ -287,17 +300,19 @@ export interface SweepWebhookEvent {
   gasPumpTxHash?: string;
 
   /**
-   * What makes this event true rather than hopeful, and never zero. It travels
-   * with the event rather than being implied by it: "confirmed" is not the same
-   * number on every chain, so if you run your own finality policy you need the
-   * count to apply it.
+   * What makes this event true rather than hopeful: at least
+   * `requiredConfirmations`, and never zero. It travels with the event rather
+   * than being implied by it: "confirmed" is not the same number on every chain,
+   * so if you run your own finality policy you need the count to apply it.
    */
   sweepConfirmations: number;
 
+  /** The network's finality depth the sweep waited for. */
+  requiredConfirmations?: number;
+
   /**
-   * When the chain was observed to hold the sweep. NOT the task's completion
-   * timestamp, which is stamped on every terminal outcome - failures included -
-   * and so says nothing about settlement.
+   * When the sweep was observed at `requiredConfirmations`. Not `Sweep.completedAt`,
+   * which is set at broadcast.
    */
   confirmedAt?: string;
 

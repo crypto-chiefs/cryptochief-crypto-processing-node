@@ -1,11 +1,11 @@
 import { CryptoChiefError, isRetryable } from './errors';
 import { sleep } from './transport';
 
-/** Tuning for the `waitFor*` polling helpers. Defaults: 5s interval, 10m timeout. */
+/** Tuning for the `waitFor*` polling helpers. Defaults: 5s interval, 10m timeout (90m for `payouts.waitFor`). */
 export interface PollOptions {
   /** Delay between polls, in ms. Default 5000. */
   intervalMs?: number;
-  /** Overall timeout, in ms. Default 600000 (10 minutes). */
+  /** Overall timeout, in ms. Default 600000 (10 minutes); `payouts.waitFor` defaults to 5400000 (90 minutes). */
   timeoutMs?: number;
   /** Abort the wait early. */
   signal?: AbortSignal;

@@ -29,4 +29,7 @@ const info = await client.transactions.execute({ uuid: signed.uuid });
 console.log(`broadcasted: status=${info.status}`);
 
 const final = await client.transactions.waitFor(signed.uuid, { intervalMs: 4000 });
-console.log(`terminal: status=${final.status} tx_hash=${final.txHash ?? '-'}`);
+console.log(
+  `terminal: status=${final.status} tx_hash=${final.txHash ?? '-'} ` +
+    `confirmations=${final.confirmations ?? '-'}/${final.requiredConfirmations ?? '-'}`,
+);

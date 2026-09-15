@@ -97,14 +97,42 @@ try {
     urlCallback: 'https://your.app/webhooks/payout',
   });
 
-  const final = await client.payouts.waitFor(exec.uuid, { intervalMs: 5000, timeoutMs: 300_000 });
-  if (final.status === 'paid') console.log('paid: tx =', final.txid);
+  // Waits up to 90 minutes by default; `paid` comes at the network's finality depth.
+  const final = await client.payouts.waitFor(exec.uuid, { intervalMs: 5000 });
+  if (final.status === 'paid') console.log('paid: tx =', final.sources?.map((s) => s.txid).join(','));
 } catch (err) {
   if (err instanceof ApiError && err.code === ErrorCode.InsufficientFunds) {
     // top up and try again
   } else throw err;
 }
 ```
+
+`info`, `history`, a repeated `execute` and the `payout.*` webhook report
+confirmations. All fields are optional.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `sources[].confirmations` | `number` | Confirmations of the source's transaction; absent until it is on chain. |
+| `serviceOperations[].confirmations` | `number` | Same, for a service transaction such as a gas top-up. |
+| `confirmations` | `number` | The lowest count among `sources`. |
+| `requiredConfirmations` | `number` | The network's finality depth. |
+
+The payout stays `confirm_check` until every source reaches
+`requiredConfirmations`, then becomes `paid` and `payout.paid` is sent.
+
+Approximate time from broadcast to `paid`:
+
+| Network | `requiredConfirmations` | Time |
+|---|---|---|
+| `BTC_MAINNET` | 2 | ~20 min |
+| `LITECOIN_MAINNET` | 6 | ~15 min |
+| `BITCOIN_CASH_MAINNET` | 6 | ~60 min |
+| `DOGECOIN_MAINNET` | 10 | ~10 min |
+| `ETH_MAINNET` | 32 | ~6.5 min |
+| `POLYGON_MAINNET` | 128 | ~4.5 min |
+
+`payouts.waitFor` waits 90 minutes by default. On `PollTimeoutError` read
+`lastState.status`; do not resubmit the payout.
 
 ## Two-phase sign + execute
 
@@ -125,6 +153,27 @@ const signed = await client.transactions.sign({
 });
 
 await client.transactions.execute({ uuid: signed.uuid });
+```
+
+`execute`, `info`, `history` and the `transaction.*` webhook always carry:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `confirmations` | `number` | `0` until the transaction is in a block, then grows while `broadcasted`. |
+| `requiredConfirmations` | `number` | The network's confirmation threshold. |
+
+The transaction becomes `confirmed` when `confirmations` reaches
+`requiredConfirmations`. The webhook fires only on final statuses.
+
+```ts
+import { TxStatus } from '@cryptochiefs/cryptochief-crypto-processing-node';
+
+const tx = await client.transactions.info(signed.uuid);
+if (tx.status === TxStatus.Confirmed) {
+  console.log('final:', tx.txHash);
+} else if (tx.status === TxStatus.Broadcasted && (tx.confirmations ?? 0) > 0) {
+  console.log(`in a block: ${tx.confirmations} of ${tx.requiredConfirmations}`);
+}
 ```
 
 ## Contract calls - the easy way
@@ -406,7 +455,7 @@ The [`examples/`](./examples) directory has copy-pasteable programs (run with
 
 `quickstart`, `payout`, `batch-payout`, `sign-execute`, `uniswap-swap`,
 `trc20-transfer`, `anchor-call`, `ton-jetton-transfer`, `wallet-generate`,
-`webhook-server`.
+`webhook-server`, `withdrawal-status`.
 
 ## FAQ - common crypto-processing tasks in Node.js
 
@@ -578,19 +627,42 @@ the name, and the SDK sends it as one. It reads back as `label: null` - a wallet
 name or it has none, and an empty string is never what you get.
 
 **How do I know a sweep actually settled?**
-Check `status` together with `sweepConfirmations`. `SweepStatus.Broadcasted`
-means the transaction is out and not yet confirmed; `SweepStatus.Completed` plus
-`sweepConfirmations` above zero means the chain confirmed it. Earlier platform
-versions reported `completed` at broadcast, so a sweep could read as settled
-while its transaction was still unconfirmed - the confirmation count separates
-the two.
+`status === SweepStatus.Completed` and `sweepConfirmations` above zero, or the
+`sweep.confirmed` webhook. A count above zero alone is not enough: a `broadcasted`
+sweep has one too. On older records `completed` can have `0`: not settled.
 
-**Not `completedAt`.** It is stamped when the sweep reached a *terminal outcome*,
-failures included - a `failed` and a `skipped` sweep both carry one - so its
-presence says the sweep finished, not that it succeeded. Book a sweep as money
-received off `completedAt` and a failed one is booked as money received. The
-moment the chain was seen holding the funds arrives separately, as `confirmedAt`
-on the `sweep.confirmed` webhook.
+```ts
+const { items } = await client.sweeps.history({ status: SweepStatus.Completed });
+const settled = items.filter((s) => s.status === SweepStatus.Completed && (s.sweepConfirmations ?? 0) > 0);
+```
+
+**Not `completedAt`.** It is the time of broadcast (or of `failed`/`skipped`) and is
+present on `broadcasted` sweeps too. The time of settlement is `confirmedAt` on the
+`sweep.confirmed` webhook.
+
+**How do I know a withdrawal from a master wallet went through?**
+Withdrawals are started from the dashboard and have no webhooks; the SDK reads
+them with `client.withdrawals.info(uuid)` and `client.withdrawals.history(...)`.
+Check `status === WithdrawalStatus.Completed`. A withdrawal walks `queue` ->
+`refueling` -> `refuel_confirmed` -> `sending` (plus `broadcasting` on EVM,
+`in_mempool` on the Bitcoin family) -> `confirm_check` -> `completed`, or ends in
+`failed`. `isWithdrawalTerminal` tells you when to stop polling.
+
+The withdrawal stays `confirm_check` until `confirmations` reaches
+`requiredConfirmations`, then becomes `completed`. `requiredConfirmations` is
+always sent; `confirmations` is absent until the transaction is in a block;
+`0` if it has left the block.
+
+```ts
+import { WithdrawalStatus } from '@cryptochiefs/cryptochief-crypto-processing-node';
+
+const wd = await client.withdrawals.info(uuid);
+if (wd.status === WithdrawalStatus.Completed) {
+  console.log('final:', wd.txHash);
+} else if (wd.status === WithdrawalStatus.ConfirmCheck && (wd.confirmations ?? 0) > 0) {
+  console.log(`in a block: ${wd.confirmations} of ${wd.requiredConfirmations}`);
+}
+```
 
 **How do I keep test payments off real chains?**
 Set `environment` on `payIns.create` to `Environment.Testnet` or

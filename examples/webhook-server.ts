@@ -55,7 +55,7 @@ function onSweepConfirmed(evt: SweepWebhookEvent): void {
   console.log(
     `  sweep ${evt.taskId}: ${evt.amountHuman} ${evt.assetSymbol} ` +
       `${evt.walletAddress} -> ${evt.toAddress} ` +
-      `tx=${evt.sweepTxHash} confirmations=${evt.sweepConfirmations} ` +
+      `tx=${evt.sweepTxHash} confirmations=${evt.sweepConfirmations}/${evt.requiredConfirmations ?? '-'} ` +
       `trigger=${evt.typeWork} fee_usd=${evt.totalFeeUsd}`,
   );
 
@@ -63,8 +63,8 @@ function onSweepConfirmed(evt: SweepWebhookEvent): void {
   // means a redelivery - acknowledge and stop.
   // if (await treasury.alreadyRecorded(evt.taskId)) return;
 
-  // The event only ever arrives confirmed, but apply your own finality policy
-  // here if you have one - "confirmed" is not the same number on every chain.
+  // The event arrives at the network's finality depth. Apply a stricter policy
+  // here if you have one.
   // await treasury.recordSettled(evt.taskId, evt.assetSymbol, evt.amountHuman, evt.sweepTxHash);
   // await ledger.moveToAvailable(customerIdFor(evt.walletAddress), evt.assetSymbol, evt.amountHuman);
   // await costs.record(evt.taskId, evt.totalFeeUsd);  // sweeps are not free
