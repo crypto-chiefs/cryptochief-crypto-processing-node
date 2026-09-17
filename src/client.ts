@@ -18,7 +18,7 @@ import { CurrenciesService } from './services/currencies';
 import { CreditsService } from './services/credits';
 
 /** SDK version, reported in the default `User-Agent`. */
-export const VERSION = '0.9.0';
+export const VERSION = '0.10.0';
 
 /** Production processing API endpoint. Test-mode projects share this host. */
 export const DEFAULT_BASE_URL = 'https://api-processing.crypto-chief.com';
@@ -69,7 +69,7 @@ export interface ClientOptions {
    * Optional - the rest of the SDK works without it.
    */
   rsaPrivateKey?: string | Buffer | KeyObject;
-  /** Override the TON RPC base URL (default `https://rpc.crypto-chief.com`). For staging. */
+  /** Override the TON RPC base URL (default `https://rpc.crypto-chief.com`). Useful for tests against a compatible endpoint. */
   tonRpcBaseUrl?: string;
 }
 
