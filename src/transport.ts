@@ -1,42 +1,69 @@
 import { ApiError, ErrorCode } from './errors';
 
-/** The error envelope shape the API returns on failure. */
-interface ErrorEnvelope {
-  error?: string;
-  msg?: string;
-  ok?: boolean;
-}
-
 /**
  * Parse a non-2xx response body into an {@link ApiError} with a stable code.
  *
- * The API answers a failure in one of two envelope shapes, and the machine code
- * sits in a different field in each:
+ * Gateway envelope, `error` is a string:
  *
- * - a refusal the gateway decided itself carries the code in `error` and a
- *   human sentence in `msg` —
- *   `{"error":"LABEL_TOO_LONG","msg":"label is longer than 255 characters"}`;
- * - a refusal relayed from an upstream service marks `error` as
- *   `SERVICE_ERROR` and carries the code in `msg` —
- *   `{"error":"SERVICE_ERROR","msg":"wallet_not_found"}`.
+ * - `{"ok":false,"error":"LABEL_TOO_LONG","msg":"label is longer than 255 characters"}` —
+ *   code in `error`, sentence in `msg`;
+ * - `{"ok":false,"error":"SERVICE_ERROR","msg":"wallet_not_found"}` — code in `msg`.
+ *   `SERVICE_ERROR` with an empty `msg` stays the code.
  *
- * So the code is `error` unless `error` is the generic `SERVICE_ERROR` marker,
- * in which case it is `msg`; an empty result falls back to `error` and then to
- * `HTTP_<status>`. The message prefers `msg` — the sentence, when there is one —
- * and falls back to `error`. The untouched body stays on {@link ApiError.raw}.
+ * Installation envelope, `error` is an object:
+ *
+ * - `{"data":null,"error":{"status":401,"name":"UnauthorizedError","message":"...",
+ *   "details":{"code":"SIGNATURE_TIMESTAMP_OUT_OF_RANGE","server_time":1789430400}},"server_time":1789430400}` —
+ *   code in `error.details.code`, else `error.name`; sentence in `error.message`.
+ *
+ * Without a code the result is `HTTP_<status>`. `server_time` is read from the
+ * top level, else from `error.details`. The body stays on {@link ApiError.raw}.
  */
 export function parseApiError(status: number, body: string): ApiError {
-  let env: ErrorEnvelope = {};
+  let env: Record<string, unknown> = {};
   try {
-    const parsed = JSON.parse(body);
-    if (parsed && typeof parsed === 'object') env = parsed as ErrorEnvelope;
+    const parsed: unknown = JSON.parse(body);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) env = parsed as Record<string, unknown>;
   } catch {
     // Non-JSON error body - fall back to HTTP_<status>.
   }
-  const gatewayCode = env.error && env.error !== ErrorCode.ServiceError ? env.error : env.msg;
-  const code = gatewayCode || env.error || `HTTP_${status}`;
-  const message = env.msg || env.error || '';
-  return new ApiError({ httpStatus: status, code, message, raw: body });
+
+  let code: string | undefined;
+  let message: string | undefined;
+  let serverTime = unixSeconds(env.server_time);
+
+  const err = env.error;
+  if (isObject(err)) {
+    const details = isObject(err.details) ? err.details : {};
+    code = str(details.code) || str(err.name);
+    message = str(err.message);
+    serverTime ??= unixSeconds(details.server_time);
+  } else {
+    const error = str(err);
+    const msg = str(env.msg);
+    code = (error && error !== ErrorCode.ServiceError ? error : msg) || error;
+    message = msg || error;
+  }
+
+  return new ApiError({
+    httpStatus: status,
+    code: code || `HTTP_${status}`,
+    message: message ?? '',
+    raw: body,
+    serverTime,
+  });
+}
+
+function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+function str(v: unknown): string | undefined {
+  return typeof v === 'string' && v !== '' ? v : undefined;
+}
+
+function unixSeconds(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isSafeInteger(v) ? v : undefined;
 }
 
 /**

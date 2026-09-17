@@ -52,7 +52,7 @@ describe('fiat currency list', () => {
     // must go on the wire as `{}`, not as an absent body.
     expect(firstCall(calls).init.body).toBe('{}');
     expect(JSON.parse(firstCall(calls).init.body as string)).toEqual({});
-    expect((firstCall(calls).init.headers as Record<string, string>).Signature).toBeTruthy();
+    expect((firstCall(calls).init.headers as Record<string, string>)['X-CC-Signature']).toMatch(/^v1=[0-9a-f]{64}$/);
 
     expect(Array.isArray(fiats)).toBe(true);
     expect(fiats).toHaveLength(3);
@@ -115,7 +115,7 @@ describe('crypto ticker list', () => {
     expect(firstCall(calls).url).toContain('/v1/currencies/cryptos');
     expect(firstCall(calls).init.body).toBe('{}');
     expect(JSON.parse(firstCall(calls).init.body as string)).toEqual({});
-    expect((firstCall(calls).init.headers as Record<string, string>).Signature).toBeTruthy();
+    expect((firstCall(calls).init.headers as Record<string, string>)['X-CC-Signature']).toMatch(/^v1=[0-9a-f]{64}$/);
 
     expect(cryptos.quote).toBe('USDT');
     expect(cryptos.count).toBe(5);

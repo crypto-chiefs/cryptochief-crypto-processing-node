@@ -1,12 +1,19 @@
 /**
- * webhook-server - a minimal Node HTTP server that verifies webhook signatures
- * and dispatches typed events.
+ * webhook-server - a minimal Node HTTP server that verifies webhooks
+ * (HMAC-SHA256 v1 over the raw body: `X-CC-Timestamp`, `X-Webhook-Delivery`,
+ * `X-CC-Signature`) and dispatches typed events.
  *
- *   API_KEY=... npx tsx examples/webhook-server.ts
+ *   API_KEY=... PORT=3000 npx tsx examples/webhook-server.ts
  *
  * Express alternative (mount express.raw so the body stays untouched):
  *   app.post('/webhook', express.raw({ type: '*\/*' }), (req, res) => {
- *     const evt = parseWebhookEvent(apiKey, req.body, req.header('Signature'));
+ *     let evt: WebhookEvent;
+ *     try {
+ *       evt = parseWebhookEvent(apiKey, req.body, req.headers);
+ *     } catch (err) {
+ *       res.sendStatus(err instanceof WebhookVerificationError ? 401 : 400);
+ *       return;
+ *     }
  *     // ... handle evt ...
  *     res.sendStatus(200);
  *   });
@@ -14,6 +21,7 @@
 import { createServer } from 'node:http';
 import {
   createWebhookHandler,
+  WEBHOOK_HEADERS,
   WEBHOOK_SENDER_IPS,
   type WebhookEvent,
   type SweepWebhookEvent,
@@ -21,10 +29,14 @@ import {
 
 const apiKey = process.env.API_KEY;
 if (!apiKey) throw new Error('set API_KEY in the environment');
+const port = Number(process.env.PORT ?? 3000);
 
-const handler = createWebhookHandler<WebhookEvent>(apiKey, (evt, { res }) => {
+// Invalid webhooks never reach this callback: the handler answers them 401.
+const handler = createWebhookHandler<WebhookEvent>(apiKey, (evt, { req, res }) => {
   const [domain, action] = evt.event.split('.');
-  console.log(`OK ${evt.event}  (uuid=${(evt as { uuid?: string }).uuid ?? '-'})`);
+  // The delivery id is the same on every attempt and resend: deduplicate on it.
+  const delivery = req.headers[WEBHOOK_HEADERS.delivery.toLowerCase()];
+  console.log(`OK ${evt.event}  (delivery=${delivery}, uuid=${(evt as { uuid?: string }).uuid ?? '-'})`);
   switch (domain) {
     case 'payout':
       // action: paid | system_fail -> reconcile your ledger
@@ -78,7 +90,7 @@ const server = createServer((req, res) => {
   res.writeHead(404).end();
 });
 
-server.listen(3000, () => {
-  console.log('webhook server on http://localhost:3000/webhook');
+server.listen(port, () => {
+  console.log(`webhook server on http://localhost:${port}/webhook`);
   console.log(`whitelist sender IPs at your edge: ${WEBHOOK_SENDER_IPS.join(', ')}`);
 });

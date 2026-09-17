@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import { CryptoChiefClient, type ClientOptions } from '../src/client';
 import { ApiError, ErrorCode, isApiError } from '../src/errors';
 import { parseApiError } from '../src/transport';
-import { canonicalJSON, sign } from '../src/sign';
 
 interface Captured {
   url: string;
@@ -29,7 +28,7 @@ function makeClient(handler: (attempt: number, c: Captured) => Response, overrid
 }
 
 describe('transport', () => {
-  it('signs the canonical body and sets the auth headers', async () => {
+  it('sends the snake_case JSON body and sets the auth headers', async () => {
     const { client, calls } = makeClient(
       () => new Response(JSON.stringify({ amount_to_receive: '0.0099', fee_info: { fee_mode: 'service' } }), { status: 200 }),
     );
@@ -51,16 +50,16 @@ describe('transport', () => {
     expect(headers['Merchant']).toBe('M1');
     expect(headers['Content-Type']).toBe('application/json');
 
-    // Body is the snake_case canonical form; signature matches it.
-    const expectedBody = canonicalJSON({
+    // Body is the snake_case JSON of the request; no Signature header.
+    expect(JSON.parse(c.init.body as string)).toEqual({
       amount: '0.0001',
       coin: 'ETH',
       from_addresses: ['0x111', '0x222'],
       network: 'ETH_SEPOLIA',
       to_address: '0xAbC',
     });
-    expect(c.init.body).toBe(expectedBody);
-    expect(headers['Signature']).toBe(sign(expectedBody, 'secret'));
+    expect(headers).not.toHaveProperty('Signature');
+    expect(headers['X-CC-Signature']).toMatch(/^v1=[0-9a-f]{64}$/);
   });
 
   it('maps an error envelope to ApiError with a stable code', async () => {
@@ -134,6 +133,54 @@ describe('transport', () => {
     expect(parseApiError(502, '{}').code).toBe('HTTP_502');
     expect(parseApiError(502, '<html>bad gateway</html>').code).toBe('HTTP_502');
     expect(parseApiError(502, '<html>bad gateway</html>').raw).toBe('<html>bad gateway</html>');
+  });
+
+  it('resolves the code and server_time from the gateway and installation envelopes', () => {
+    const gw = parseApiError(
+      401,
+      JSON.stringify({ ok: false, error: 'SIGNATURE_TIMESTAMP_OUT_OF_RANGE', msg: 'X-CC-Timestamp differs', server_time: 1_789_430_400 }),
+    );
+    expect(gw.code).toBe(ErrorCode.SignatureTimestampOutOfRange);
+    expect(gw.message).toContain('X-CC-Timestamp differs');
+    expect(gw.serverTime).toBe(1_789_430_400);
+
+    const bodyWl = JSON.stringify({
+      data: null,
+      error: {
+        status: 401,
+        name: 'UnauthorizedError',
+        message: 'X-CC-Timestamp differs from server time by more than 300 seconds',
+        details: { code: 'SIGNATURE_TIMESTAMP_OUT_OF_RANGE', server_time: 1_789_430_401 },
+      },
+      server_time: 1_789_430_401,
+    });
+    const wl = parseApiError(401, bodyWl);
+    expect(wl.code).toBe(ErrorCode.SignatureTimestampOutOfRange);
+    expect(wl.httpStatus).toBe(401);
+    expect(wl.message).toContain('X-CC-Timestamp differs from server time by more than 300 seconds');
+    expect(wl.serverTime).toBe(1_789_430_401);
+    expect(wl.raw).toBe(bodyWl);
+
+    // server_time only in details.
+    expect(
+      parseApiError(
+        401,
+        JSON.stringify({ data: null, error: { status: 401, name: 'UnauthorizedError', message: 'x', details: { code: 'SIGNATURE_TIMESTAMP_OUT_OF_RANGE', server_time: 7 } } }),
+      ).serverTime,
+    ).toBe(7);
+
+    for (const code of ['SIGNATURE_REPLAYED', 'INVALID_SIGNATURE', 'BAD_AUTH_HEADERS', 'PAYLOAD_TOO_LARGE']) {
+      const e = parseApiError(401, JSON.stringify({ data: null, error: { status: 401, name: 'UnauthorizedError', message: 'm', details: { code } } }));
+      expect(e.code).toBe(code);
+      expect(e.serverTime).toBeUndefined();
+    }
+
+    // No details.code: error.name; nothing usable: HTTP_<status>.
+    expect(parseApiError(404, JSON.stringify({ data: null, error: { status: 404, name: 'NotFoundError', message: 'not found', details: {} } })).code).toBe(
+      'NotFoundError',
+    );
+    expect(parseApiError(400, JSON.stringify({ data: null, error: { details: {} } })).code).toBe('HTTP_400');
+    expect(parseApiError(400, JSON.stringify({ ok: false, error: 'INVALID_PARAMS', server_time: '5' })).serverTime).toBeUndefined();
   });
 
   it('retries 5xx then succeeds', async () => {

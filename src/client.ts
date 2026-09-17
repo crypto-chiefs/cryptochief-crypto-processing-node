@@ -1,6 +1,7 @@
-import { createPrivateKey, type KeyObject } from 'node:crypto';
-import { CryptoChiefError, isRetryable } from './errors';
-import { signValue } from './sign';
+import { createPrivateKey, randomBytes, type KeyObject } from 'node:crypto';
+import { CryptoChiefError, ErrorCode, isRetryable } from './errors';
+import { HMAC_V1_HEADERS, isBlankApiKey, signHmacV1, upperAsciiMethod } from './sign';
+import { encodeRequestBody } from './body';
 import { backoffDelay, networkError, parseApiError, sleep } from './transport';
 import { decryptRsaOaep, RsaKeyNotConfiguredError } from './rsa';
 import { TonRpc } from './ton/rpc';
@@ -35,9 +36,13 @@ export interface Logger {
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
 export interface ClientOptions {
-  /** Merchant ID from the dashboard (Integration tab). Required. */
+  /** Merchant ID from the dashboard (Integration tab). Required. Leading and trailing whitespace is ignored. */
   merchantId: string;
-  /** API key (signing secret) from the dashboard. Keep it server-side. Required. */
+  /**
+   * API key (signing secret) from the dashboard. Keep it server-side. Required:
+   * an empty key, or one of spaces and tabs only, is refused by the server, so
+   * the constructor rejects it.
+   */
   apiKey: string;
   /** API base URL. Defaults to {@link DEFAULT_BASE_URL}. */
   baseUrl?: string;
@@ -68,15 +73,46 @@ export interface ClientOptions {
   tonRpcBaseUrl?: string;
 }
 
-/** Per-call options. Pass an `AbortSignal` to cancel the request (and its retries). */
+/**
+ * Per-call options, accepted by every service method and by
+ * {@link CryptoChiefClient.request} / {@link CryptoChiefClient.send}.
+ */
 export interface RequestOptions {
   /** Abort the request (and cancel retries) via an `AbortController`/`AbortSignal`. */
   signal?: AbortSignal;
+  /**
+   * `Idempotency-Key` header value.
+   *
+   * The header is part of the string to sign, so it has to be set here: a
+   * header added by a `fetch` wrapper is not covered by the signature and the
+   * server answers 401 `INVALID_SIGNATURE`.
+   *
+   * The server keeps the value in the billing record of the call, up to 255
+   * bytes. It does not deduplicate payouts - `orderId` does that.
+   *
+   * The key must be printable ASCII with no space or tab at either edge; the
+   * server trims those before signing, so an untrimmed value would be signed in
+   * a form it never sees. A key that does not qualify throws
+   * {@link CryptoChiefError}; an empty string sends no header.
+   */
+  idempotencyKey?: string;
+}
+
+/** Printable ASCII, no space at either edge; tab and other control bytes nowhere. */
+const IDEMPOTENCY_KEY_RE = /^[\x21-\x7e]+(?: +[\x21-\x7e]+)*$/;
+
+function checkedIdempotencyKey(key: string): string {
+  if (!IDEMPOTENCY_KEY_RE.test(key)) {
+    throw new CryptoChiefError(
+      'cryptochief: idempotencyKey must be printable ASCII without a leading or trailing space or tab',
+    );
+  }
+  return key;
 }
 
 /**
  * Entry point to the Crypto Chief processing API. Construct once and reuse -
- * the client is stateless beyond its configuration and safe to share.
+ * the client is safe to share.
  *
  * ```ts
  * const client = new CryptoChiefClient({ merchantId: 'M', apiKey: 'K' });
@@ -95,6 +131,8 @@ export class CryptoChiefClient {
   private readonly userAgent: string;
   private readonly fetchImpl: FetchLike;
   private readonly logger?: Logger;
+  /** Seconds added to the local clock for `X-CC-Timestamp`, learned from `server_time`. */
+  private clockOffsetSec = 0;
 
   private readonly rsaKeyInput?: string | Buffer | KeyObject;
   private rsaKeyResolved?: KeyObject;
@@ -116,10 +154,11 @@ export class CryptoChiefClient {
   readonly webhooks: WebhooksService;
 
   constructor(options: ClientOptions) {
-    if (!options || !options.merchantId) throw new CryptoChiefError('cryptochief: merchantId is required');
-    if (!options.apiKey) throw new CryptoChiefError('cryptochief: apiKey is required');
+    const merchantId = trimHttpWhitespace(String(options?.merchantId ?? ''));
+    if (!merchantId) throw new CryptoChiefError('cryptochief: merchantId is required');
+    if (isBlankApiKey(options?.apiKey)) throw new CryptoChiefError('cryptochief: apiKey is required');
 
-    this.merchantId = options.merchantId;
+    this.merchantId = merchantId;
     this.apiKey = options.apiKey;
     this.baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
     this.timeoutMs = options.timeoutMs ?? 60_000;
@@ -153,36 +192,87 @@ export class CryptoChiefClient {
   }
 
   /**
-   * Low-level signed POST against an API path (e.g. `/v1/payout/estimate`).
-   * Canonicalizes + signs the body, sends it, retries transient failures, and
-   * returns the parsed JSON. Service methods are thin wrappers over this; reach
-   * for it directly only to hit an endpoint the SDK doesn't model yet.
+   * Low-level signed POST against an API path (e.g. `/v1/payout/estimate`) -
+   * {@link send} with `POST`. Service methods are thin wrappers over this;
+   * reach for it directly only to hit an endpoint the SDK doesn't model yet.
    */
-  async request<T>(path: string, body?: unknown, opts?: RequestOptions): Promise<T> {
-    const { canonical, signature } = signValue(body, this.apiKey);
+  request<T>(path: string, body?: unknown, opts?: RequestOptions): Promise<T> {
+    return this.send<T>('POST', path, body, opts);
+  }
+
+  /**
+   * Low-level signed request with any HTTP method, for an endpoint the SDK
+   * doesn't model yet - a signed `GET` with a query, say:
+   *
+   * ```ts
+   * const info = await client.send('GET', '/v1/payments/order/info?uuid=' + uuid);
+   * ```
+   *
+   * Encodes the body as JSON once, signs every attempt with HMAC v1, retries
+   * transient failures, and returns the parsed JSON. The method is signed and
+   * sent upper-cased over `a`-`z`; anything that is not an RFC 9110 token
+   * throws {@link CryptoChiefError}, as does a body on `GET` or `HEAD`.
+   *
+   * Object fields that are `null` or `undefined` are not sent; `null` array
+   * elements are. A `bigint` is sent as its exact integer. `undefined` and
+   * `null` bodies are sent empty. The path is signed percent-decoded, as the
+   * server reads it; the query is signed as the URL carries it.
+   */
+  async send<T>(method: string, path: string, body?: unknown, opts?: RequestOptions): Promise<T> {
+    const httpMethod = checkedMethod(method);
+    const payload = encodeRequestBody(body);
+    if (payload !== '' && BODYLESS_METHODS.has(httpMethod)) {
+      throw new CryptoChiefError(`cryptochief: a ${httpMethod} request cannot carry a body`);
+    }
     const url = this.baseUrl + path;
+    const { routePath, query } = signedTarget(url, path);
+    const idempotencyKey = opts?.idempotencyKey ? checkedIdempotencyKey(opts.idempotencyKey) : '';
     const attempts = this.retries + 1;
     let lastErr: unknown;
+    let clockCorrected = false;
+    let skipDelay = false;
 
     for (let attempt = 0; attempt < attempts; attempt++) {
-      if (attempt > 0) {
+      if (attempt > 0 && !skipDelay) {
         const delayMs = backoffDelay(attempt, this.backoff.baseMs, this.backoff.maxMs);
         this.logger?.debug('cryptochief retry', { attempt, delayMs, path });
         await sleep(delayMs, opts?.signal); // throws if the caller aborts
       }
+      skipDelay = false;
+
+      const timestamp = String(Math.floor(Date.now() / 1000) + this.clockOffsetSec);
+      const nonce = randomBytes(16).toString('hex');
+      const hmac = signHmacV1(
+        {
+          timestamp,
+          nonce,
+          method: httpMethod,
+          path: routePath,
+          query,
+          merchant: this.merchantId,
+          idempotencyKey,
+          body: payload,
+        },
+        this.apiKey,
+      );
+      const headers: Record<string, string> = {
+        Accept: 'application/json',
+        Merchant: this.merchantId,
+      };
+      // A body needs application/json; without one the header would be a lie.
+      if (payload !== '') headers['Content-Type'] = 'application/json';
+      if (idempotencyKey) headers[HMAC_V1_HEADERS.idempotencyKey] = idempotencyKey;
+      headers[HMAC_V1_HEADERS.timestamp] = timestamp;
+      headers[HMAC_V1_HEADERS.nonce] = nonce;
+      headers[HMAC_V1_HEADERS.signature] = 'v1=' + hmac;
+      headers['User-Agent'] = this.userAgent;
 
       let resp: Response;
       try {
         resp = await this.fetchImpl(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-            Merchant: this.merchantId,
-            Signature: signature,
-            'User-Agent': this.userAgent,
-          },
-          body: canonical,
+          method: httpMethod,
+          headers,
+          body: payload === '' ? undefined : payload,
           signal: this.attemptSignal(opts?.signal),
         });
       } catch (err) {
@@ -218,6 +308,18 @@ export class CryptoChiefClient {
       if (resp.status >= 500) {
         lastErr = apiErr;
         continue;
+      }
+      if (apiErr.code === ErrorCode.SignatureTimestampOutOfRange && !clockCorrected) {
+        const serverTime = apiErr.serverTime;
+        if (serverTime !== undefined) {
+          clockCorrected = true;
+          this.clockOffsetSec = serverTime - Math.floor(Date.now() / 1000);
+          this.logger?.debug('cryptochief clock offset', { path, offsetSec: this.clockOffsetSec });
+          lastErr = apiErr;
+          attempt--; // the correction does not use the retry budget
+          skipDelay = true;
+          continue;
+        }
       }
       throw apiErr;
     }
@@ -262,6 +364,55 @@ export class CryptoChiefClient {
     }
     return this.tonRpcInstance;
   }
+}
+
+/** Methods `fetch` forbids a body on. */
+const BODYLESS_METHODS = new Set(['GET', 'HEAD']);
+
+/** RFC 9110 token: the characters an HTTP method may be made of. */
+const HTTP_METHOD_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+
+/** Method as signed and sent: upper-cased over `a`-`z`, and a token or nothing. */
+function checkedMethod(method: string): string {
+  const upper = upperAsciiMethod(typeof method === 'string' ? method : '');
+  if (!HTTP_METHOD_RE.test(upper)) {
+    throw new CryptoChiefError(`cryptochief: HTTP method must be an RFC 9110 token: ${JSON.stringify(method)}`);
+  }
+  return upper;
+}
+
+/**
+ * HMAC v1 path and query. The path is the route without query, percent-decoded
+ * - the server signs the decoded path, so `/v1/orders/payout%2F8814` is signed
+ * as `/v1/orders/payout/8814`. The query is signed as the request URL carries
+ * it, encoded.
+ */
+function signedTarget(url: string, path: string): { routePath: string; query: string } {
+  const cut = path.search(/[?#]/);
+  const routePath = decodePath(cut < 0 ? path : path.slice(0, cut));
+  let query: string;
+  try {
+    query = new URL(url).search.slice(1);
+  } catch {
+    const q = path.indexOf('?');
+    query = q < 0 ? '' : path.slice(q + 1).split('#')[0]!;
+  }
+  return { routePath, query };
+}
+
+/** Percent-decodes a route path; a `%` that is not a valid UTF-8 escape is an error. */
+function decodePath(path: string): string {
+  if (!path.includes('%')) return path;
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    throw new CryptoChiefError(`cryptochief: path is not valid percent-encoding: ${path}`);
+  }
+}
+
+/** Strips leading and trailing HTTP whitespace (space, tab, CR, LF), as `fetch` does for header values. */
+function trimHttpWhitespace(s: string): string {
+  return s.replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, '');
 }
 
 function truncate(s: string, n: number): string {

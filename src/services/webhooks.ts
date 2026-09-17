@@ -103,7 +103,7 @@ export interface StaticDepositResendResult {
 
 /**
  * Reads and re-fires the platform's OUTBOUND webhooks — the deliveries made to
- * your endpoint. (Verifying INCOMING webhooks is `verifyWebhookSignature` /
+ * your endpoint. (Verifying INCOMING webhooks is `verifyWebhook` /
  * `createWebhookHandler` in `webhook.ts`.)
  *
  * A delivery is named by the uuid the platform put on it in the

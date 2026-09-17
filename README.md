@@ -17,7 +17,7 @@ cryptocurrency payment processing - stablecoin (USDT / USDC) payouts, pay-ins,
 swaps, and smart-contract calls - with fully typed requests, `bigint` amounts,
 and `instanceof`-friendly error codes.
 
-- One-line setup; a reusable, stateless `CryptoChiefClient`.
+- One-line setup; a reusable `CryptoChiefClient`.
 - **First-class TypeScript** - typed request/response for every endpoint.
 - **Contract calls without hand-encoded calldata** - Solidity ABI for EVM and
   TRON, Anchor + Borsh for Solana, Jetton / NFT / comment helpers for TON.
@@ -346,33 +346,121 @@ wallet has none - nobody named it, a master wallet has no master, a transit wall
 never has a callback URL. `label` is on every response that describes a wallet:
 generation, info, the list, and each of the three updates above.
 
+## Request signing
+
+Requests are signed with HMAC-SHA256 v1.
+
+| Header | Value |
+|---|---|
+| `Merchant` | merchant ID |
+| `X-CC-Timestamp` | Unix time, seconds |
+| `X-CC-Nonce` | 32 hex (16 random bytes), new per attempt |
+| `X-CC-Signature` | `v1=<64 lowercase hex>` |
+| `Idempotency-Key` | optional, from `{ idempotencyKey }` |
+
+```
+string_to_sign = "CC-HMAC-SHA256-REQ-V1\n" + timestamp + "\n" + nonce + "\n" +
+                 METHOD + "\n" + path + "\n" + query + "\n" + merchant + "\n" +
+                 idempotency_key + "\n" + hex(sha256(body))
+signature      = hex(hmac_sha256(apiKey, string_to_sign))
+```
+
+The body is compact JSON of the request. Object fields that are `null` or
+`undefined` are not sent; a `bigint` is sent as its exact integer.
+
+`path` is the route from `/v1/` without the base URL, percent-decoded as the
+server reads it - `/v1/orders/payout%2F8814` is signed as
+`/v1/orders/payout/8814`; `query` has no `?` and is signed encoded, as the URL
+carries it; `METHOD` is upper-cased over `a`-`z`; empty values stay empty lines;
+`body` is the exact bytes sent. Timestamp, nonce and signature are recomputed on
+every retry. On `SIGNATURE_TIMESTAMP_OUT_OF_RANGE` the client adopts the offset
+from `server_time` and repeats the request once.
+
+```ts
+import { signHmacV1, hmacV1StringToSign } from '@cryptochiefs/cryptochief-crypto-processing-node';
+
+const sig = signHmacV1({
+  timestamp: '1789430400',
+  nonce: '00112233445566778899aabbccddeeff',
+  method: 'POST',
+  path: '/v1/wallets/info',
+  merchant: '3f2a1b4c-5d6e-7f80-9a1b-2c3d4e5f6071',
+  body: '{"address":"TLa2f6VPqDgRE67v1736s7bJ8Ray5wYjU7"}',
+}, 'test_api_key_123');
+// f49f43924c6f6596671e559c8c97d55950da3f3b039adbf198a5efbd5ba64088
+```
+
+For an endpoint the SDK does not model, `client.send(method, path, body?, opts?)`
+sends a signed request with any HTTP method and returns the parsed JSON;
+`client.request(path, body?, opts?)` is the same with `POST`.
+
+```ts
+const order = await client.send('GET', `/v1/payments/order/info?uuid=${uuid}`);
+```
+
 ## Webhooks
 
-Outbound webhooks are signed with the same algorithm as outgoing requests.
+Webhooks are signed with HMAC-SHA256 v1 over the raw body; the key is the API key.
+
+| Header | Value |
+|---|---|
+| `X-Webhook-Delivery` | delivery id, the same on every attempt and resend |
+| `X-CC-Timestamp` | Unix time of the attempt, seconds |
+| `X-CC-Signature` | `v1=<64 hex>` |
+
+```
+string_to_sign = "CC-HMAC-SHA256-WEBHOOK-V1\n" + X-CC-Timestamp + "\n" +
+                 X-Webhook-Delivery + "\n" + hex(sha256(raw body))
+X-CC-Signature = "v1=" + hex(hmac_sha256(apiKey, string_to_sign))
+```
 
 ```ts
 import express from 'express';
-import { parseWebhookEvent, type PayoutWebhookEvent } from '@cryptochiefs/cryptochief-crypto-processing-node';
+import {
+  parseWebhookEvent,
+  WebhookVerificationError,
+  type PayoutWebhookEvent,
+} from '@cryptochiefs/cryptochief-crypto-processing-node';
 
-// IMPORTANT: keep the raw body - do not let a JSON parser touch it first.
+// Keep the raw body: the signature covers the exact bytes received.
 app.post('/webhook/payout', express.raw({ type: '*/*' }), (req, res) => {
+  let evt: PayoutWebhookEvent;
   try {
-    const evt = parseWebhookEvent<PayoutWebhookEvent>(apiKey, req.body, req.header('Signature'));
-    console.log('payout', evt.uuid, '->', evt.status);
-    res.sendStatus(200);
-  } catch {
-    res.sendStatus(401); // WebhookSignatureError
+    evt = parseWebhookEvent<PayoutWebhookEvent>(apiKey, req.body, req.headers);
+  } catch (err) {
+    res.sendStatus(err instanceof WebhookVerificationError ? 401 : 400);
+    return;
   }
+  console.log('payout', evt.uuid, '->', evt.status, req.header('X-Webhook-Delivery'));
+  res.sendStatus(200);
 });
 ```
 
-For a plain `http` server, `createWebhookHandler(apiKey, (evt, { res }) => ...)` reads
-the raw body and verifies it for you. Low-level `verifyWebhookSignature(apiKey,
-rawBody, signature)` returns a boolean (constant-time). `WEBHOOK_SENDER_IPS`
-lists the delivery IPs to whitelist at your edge.
+- `verifyWebhook(apiKey, rawBody, headers, { toleranceSec, now })` returns when
+  the webhook is authentic and otherwise throws `WebhookVerificationError` with
+  `reason`: `'headers'` (a header is missing, repeated or malformed),
+  `'timestamp'` (`X-CC-Timestamp` is more than `toleranceSec`, default 300, from
+  `now`) or `'signature'`. `rawBody` is a string or bytes; any other value throws
+  `CryptoChiefError`. `headers` is `req.headers`, a WHATWG `Headers` or
+  `[name, value]` pairs.
+- `parseWebhookEvent(apiKey, rawBody, headers, options)` verifies, then returns
+  the camelCased typed event.
+- `createWebhookHandler(apiKey, (evt, { req, res }) => ..., { maxBodyBytes, toleranceSec, now })`
+  is a Node `http` handler: it reads the raw body and answers `401` when
+  verification fails and `413` when the body is larger than `maxBodyBytes`
+  (default 1 MiB).
+- A WHATWG `Request` (route handlers, Hono, Bun):
+  `verifyWebhook(apiKey, new Uint8Array(await request.arrayBuffer()), request.headers)`.
+- `signWebhookV1(apiKey, timestamp, deliveryId, body)` returns the
+  `X-CC-Signature` value; `webhookV1StringToSign(timestamp, deliveryId, body)`
+  the string to sign.
+- The signature is compared in constant time. A resend carries the same
+  `X-Webhook-Delivery` and a new `X-CC-Timestamp`; deduplicate on the delivery id.
+- `WEBHOOK_HEADERS` holds the header names; `WEBHOOK_SENDER_IPS` lists the
+  delivery IPs to whitelist at your edge.
 
 Typed payloads: `PayoutWebhookEvent`, `TransactionWebhookEvent`,
-`PayInWebhookEvent`, `StaticDepositWebhookEvent`.
+`PayInWebhookEvent`, `StaticDepositWebhookEvent`, `SweepWebhookEvent`.
 
 ## Error handling
 
@@ -396,6 +484,17 @@ try {
   } else throw err;
 }
 ```
+
+`code` is taken from the error body:
+
+| Body | `code` |
+|---|---|
+| `{"ok":false,"error":"<CODE>","msg":"..."}` | `error` |
+| `{"ok":false,"error":"SERVICE_ERROR","msg":"<CODE>"}` | `msg` |
+| `{"data":null,"error":{"name":"...","message":"...","details":{"code":"<CODE>"}}}` | `error.details.code`, else `error.name` |
+| anything else | `HTTP_<status>` |
+
+`err.serverTime` holds `server_time` (Unix seconds) when the body has it.
 
 ## Amounts
 
@@ -431,13 +530,16 @@ const client = new CryptoChiefClient({
 });
 ```
 
-Every method takes an optional `{ signal }` - pass an `AbortSignal` to cancel a
-request (and its retries):
+Every method takes optional per-call options. `signal` is an `AbortSignal` that
+cancels the request and its retries; `idempotencyKey` is sent as
+`Idempotency-Key`:
 
 ```ts
 const ac = new AbortController();
 setTimeout(() => ac.abort(), 3000);
 await client.payouts.info(uuid, { signal: ac.signal });
+
+await client.payouts.execute(req, { idempotencyKey: 'payout-2026-09-16-0001' });
 ```
 
 **Test mode** is a per-project toggle in the dashboard, not a separate base URL.
@@ -447,6 +549,14 @@ await client.payouts.info(uuid, { signal: ac.signal });
 `payouts.execute` / `payouts.batchExecute` are idempotent on `orderId`:
 re-submitting the same `orderId` returns the same `uuid` rather than creating a
 second payout. The built-in 5xx retry relies on this - no extra ceremony needed.
+
+`idempotencyKey` is a separate per-call option, accepted by every service method
+and by `client.request` / `client.send`. The server keeps it in the billing
+record of the call, up to 255 bytes; it does not deduplicate payouts.
+The header is part of the string to sign, so set it here rather than from a
+`fetch` wrapper - a header added after signing is not covered by the signature
+and the server answers `401 INVALID_SIGNATURE`. The key must be printable ASCII
+with no space or tab at either edge.
 
 ## Runnable examples
 
@@ -481,7 +591,7 @@ one-liner. Give it a Solidity signature plus args.
 amount; the sender's Jetton wallet and gas budget are resolved automatically.
 
 **How do I verify a Crypto Chief webhook signature in Express?**
-`parseWebhookEvent(apiKey, rawBody, signature)` (with `express.raw`), or wrap a
+`parseWebhookEvent(apiKey, rawBody, req.headers)` (with `express.raw`), or wrap a
 plain `http` handler with `createWebhookHandler`.
 
 **How do I control when a deposit wallet is swept?**

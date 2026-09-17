@@ -38,8 +38,15 @@ export {
   isRetryable,
 } from './errors';
 
-// Signing primitives (advanced / manual use)
-export { canonicalJSON, sign, signValue } from './sign';
+// Request signing (advanced / manual use)
+export {
+  signHmacV1,
+  hmacV1StringToSign,
+  hmacV1BodySha256,
+  HMAC_V1_SCOPE,
+  HMAC_V1_HEADERS,
+  type HmacV1Input,
+} from './sign';
 
 // Amounts
 export { humanToBase, baseToHuman, nanoTon, InvalidAmountError } from './amount';
@@ -64,12 +71,18 @@ export {
 
 // Webhooks
 export {
-  verifyWebhookSignature,
+  verifyWebhook,
   parseWebhookEvent,
   createWebhookHandler,
-  WebhookSignatureError,
-  WEBHOOK_HEADER,
+  signWebhookV1,
+  webhookV1StringToSign,
+  WebhookVerificationError,
+  WEBHOOK_HEADERS,
+  WEBHOOK_DELIVERY_HEADER,
   WEBHOOK_SENDER_IPS,
+  type WebhookHeaders,
+  type WebhookVerifyOptions,
+  type WebhookVerificationReason,
   type WebhookHandlerOptions,
   type PayoutWebhookEvent,
   type TransactionWebhookEvent,

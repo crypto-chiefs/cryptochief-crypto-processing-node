@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { CryptoChiefClient, type ClientOptions } from '../src/client';
-import { canonicalJSON, sign } from '../src/sign';
 
 interface Captured {
   url: string;
@@ -61,11 +60,10 @@ describe('credits', () => {
     expect(headers['Merchant']).toBe('M1');
     expect(headers['Content-Type']).toBe('application/json');
 
-    // Body is the canonical empty object; signature matches it.
-    const expectedBody = canonicalJSON({});
-    expect(expectedBody).toBe('{}');
-    expect(c.init.body).toBe(expectedBody);
-    expect(headers['Signature']).toBe(sign(expectedBody, 'secret'));
+    // Body is the empty object; no Signature header.
+    expect(c.init.body).toBe('{}');
+    expect(headers).not.toHaveProperty('Signature');
+    expect(headers['X-CC-Signature']).toMatch(/^v1=[0-9a-f]{64}$/);
   });
 
   it('posts a signed topup body omitting unset optional urls and maps the minimal response', async () => {
@@ -100,12 +98,10 @@ describe('credits', () => {
     expect(headers['Merchant']).toBe('M1');
 
     // Unset optional urls are omitted from the wire entirely, not sent as "".
-    const expectedBody = canonicalJSON({ amount: '25', currency: 'USDT' });
-    expect(expectedBody).toBe('{"amount":"25","currency":"USDT"}');
-    expect(c.init.body).toBe(expectedBody);
+    expect(JSON.parse(c.init.body as string)).toEqual({ amount: '25', currency: 'USDT' });
     expect(c.init.body).not.toContain('url_success');
     expect(c.init.body).not.toContain('url_error');
-    expect(headers['Signature']).toBe(sign(expectedBody, 'secret'));
+    expect(headers).not.toHaveProperty('Signature');
   });
 
   it('sends snake_case redirect urls when set and maps order_uuid/expired_at', async () => {
@@ -142,18 +138,14 @@ describe('credits', () => {
     const c = calls[0]!;
     expect(c.url).toBe('https://api-processing.crypto-chief.com/v1/credits/topup');
 
-    // camelCase params reach the wire snake_cased, keys canonically sorted.
-    const expectedBody = canonicalJSON({
+    // camelCase params reach the wire snake_cased.
+    expect(JSON.parse(c.init.body as string)).toEqual({
       amount: '100000',
       currency: 'USDC',
       url_success: 'https://shop.example/topup/ok',
       url_error: 'https://shop.example/topup/fail',
     });
-    expect(expectedBody).toBe(
-      '{"amount":"100000","currency":"USDC","url_error":"https://shop.example/topup/fail","url_success":"https://shop.example/topup/ok"}',
-    );
-    expect(c.init.body).toBe(expectedBody);
     const headers = c.init.headers as Record<string, string>;
-    expect(headers['Signature']).toBe(sign(expectedBody, 'secret'));
+    expect(headers).not.toHaveProperty('Signature');
   });
 });

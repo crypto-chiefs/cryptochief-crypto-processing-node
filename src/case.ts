@@ -9,6 +9,11 @@
  * addresses) pass through untouched, as do `bigint`/`number`/`boolean`/`null`.
  */
 
+import { CryptoChiefError } from './errors';
+
+/** Deeper values are rejected by the API's JSON parser. */
+const MAX_DEPTH = 10000;
+
 function camelToSnake(s: string): string {
   return s.replace(/[A-Z]/g, (m) => '_' + m.toLowerCase());
 }
@@ -23,29 +28,41 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
+/** Deep copy with renamed keys, without recursion. Arrays keep holes. */
+function mapKeys(value: unknown, rename: (k: string) => string, dropUndefined: boolean): unknown {
+  const pending: [source: unknown, target: Record<string, unknown> | unknown[], depth: number][] = [];
+  const copy = (v: unknown, depth: number): unknown => {
+    if (!Array.isArray(v) && !isPlainObject(v)) return v;
+    if (depth > MAX_DEPTH) throw new CryptoChiefError(`cryptochief: nesting deeper than ${MAX_DEPTH}`);
+    const target = Array.isArray(v) ? new Array<unknown>(v.length) : {};
+    pending.push([v, target, depth]);
+    return target;
+  };
+  const root = copy(value, 1);
+  for (let item = pending.pop(); item !== undefined; item = pending.pop()) {
+    const [source, target, depth] = item;
+    if (Array.isArray(source)) {
+      const arr = target as unknown[];
+      for (let i = 0; i < source.length; i++) {
+        if (i in source) arr[i] = copy(source[i], depth + 1);
+      }
+    } else {
+      const obj = target as Record<string, unknown>;
+      for (const [k, v] of Object.entries(source as Record<string, unknown>)) {
+        if (dropUndefined && v === undefined) continue;
+        obj[rename(k)] = copy(v, depth + 1);
+      }
+    }
+  }
+  return root;
+}
+
 /** Deep-convert a request value to its snake_case wire form, dropping `undefined`. */
 export function toWire(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(toWire);
-  if (isPlainObject(value)) {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value)) {
-      if (v === undefined) continue;
-      out[camelToSnake(k)] = toWire(v);
-    }
-    return out;
-  }
-  return value;
+  return mapKeys(value, camelToSnake, true);
 }
 
 /** Deep-convert a wire response value to its camelCase public form. */
 export function fromWire(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(fromWire);
-  if (isPlainObject(value)) {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value)) {
-      out[snakeToCamel(k)] = fromWire(v);
-    }
-    return out;
-  }
-  return value;
+  return mapKeys(value, snakeToCamel, false);
 }

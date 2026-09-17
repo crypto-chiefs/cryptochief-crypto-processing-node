@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.10.0] — 2026-09-17
+
+- **Breaking:** requests are signed with HMAC-SHA256 v1 only: headers `X-CC-Timestamp`, `X-CC-Nonce`, `X-CC-Signature`; no `Signature` header; one repeat with clock correction on `SIGNATURE_TIMESTAMP_OUT_OF_RANGE`
+- **Breaking:** removed `sign`, `signValue`, `canonicalJSON`
+- The request body is compact JSON in the key order of the request value; object fields that are `null` or `undefined` are omitted; a `bigint` is sent as its exact integer
+- **Breaking:** webhooks are verified with HMAC-SHA256 v1 over the raw body and the `X-CC-Timestamp`, `X-Webhook-Delivery`, `X-CC-Signature` headers: `verifyWebhook(apiKey, rawBody, headers, { toleranceSec, now })` throws `WebhookVerificationError` with `reason` `'headers'`, `'timestamp'` or `'signature'`; removed `verifyWebhookSignature`, `WebhookSignatureError`, `WEBHOOK_HEADER`
+- **Breaking:** `parseWebhookEvent(apiKey, rawBody, headers, options)` takes the request headers instead of the signature value
+- `createWebhookHandler` takes `toleranceSec` and `now`; an empty `apiKey` throws when the handler is created
+- `createWebhookHandler` answers `413` to a body larger than `maxBodyBytes`; past 1 MiB over the limit the response carries `Connection: close` and the connection is closed
+- `signWebhookV1`, `webhookV1StringToSign`, `WEBHOOK_HEADERS`, types `WebhookHeaders`, `WebhookVerifyOptions`, `WebhookVerificationReason`
+- `signHmacV1`, `hmacV1StringToSign`, `hmacV1BodySha256`, `HMAC_V1_SCOPE`, `HMAC_V1_HEADERS`; `ErrorCode.BadAuthHeaders`, `SignatureTimestampOutOfRange`, `InvalidSignature`, `SignatureReplayed`, `PayloadTooLarge`
+- `RequestOptions.idempotencyKey` on every service method and on `client.request` / `client.send` sends `Idempotency-Key` inside the signature; printable ASCII without a leading or trailing space or tab, otherwise `CryptoChiefError`
+- `client.send(method, path, body, opts)` — a signed request with any HTTP method, `GET` with a query included; `client.request` is `send` with `POST`. The method is signed and sent upper-cased over `a`-`z`; a method that is not an RFC 9110 token, and a body on `GET` or `HEAD`, throw `CryptoChiefError`
+- An empty body is sent as no body: no `Content-Type` header
+- An `apiKey` that is empty or only spaces and tabs is refused by the constructor, by `signHmacV1`, `signWebhookV1`, `verifyWebhook`, `parseWebhookEvent` and `createWebhookHandler`
+- The request path is signed percent-decoded, as the server reads it: `/v1/orders/payout%2F8814` is signed as `/v1/orders/payout/8814`. A path that is not valid percent-encoding throws `CryptoChiefError` before the request is sent
+- `merchantId` is stored without leading and trailing whitespace; a blank `merchantId` throws
+- `ApiError.code` is read from `error.details.code` (else `error.name`) of `{"data":null,"error":{...}}` error bodies; `ApiError.serverTime`
+- `WEBHOOK_DELIVERY_HEADER` is exported from the package entry point
+
 ## [0.9.0] — 2026-09-15
 
 - **Breaking:** `PayoutInfo.network`, `coin`, `amount`, `PayoutFeeInfo.estimatedFiat`, `estimatedCoin` and `PayoutSource.amount` are optional; `PayoutSource.amountCrypto` is required; `payouts.waitFor` default timeout is 90 minutes

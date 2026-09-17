@@ -1,135 +1,107 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { CryptoChiefError } from './errors';
 
 /**
- * Canonical JSON + request signing.
+ * HMAC-SHA256 v1 request signing.
  *
- * Crypto Chief signs the *canonical* serialization of a request body. The
- * canonical form is fully deterministic:
- *
- *  - object keys sorted lexicographically by UTF-8 bytes, recursively;
- *  - compact (no insignificant whitespace);
- *  - the HTML-sensitive characters `<`, `>`, `&` and the U+2028 / U+2029
- *    line/paragraph separators emitted as their JSON unicode escapes;
- *  - standard JSON escapes for `"`, `\`, and control characters (`\n`, `\r`,
- *    `\t` short forms; everything else below 0x20 as `\u00XX`, lowercase hex).
- *
- * The gateway re-derives this canonical form from the bytes it receives and
- * checks the signature against it, so the client must emit byte-identical
- * output. The regression vectors in `test/sign.test.ts` lock this down.
+ * `signature = hex(HMAC-SHA256(key = apiKey, message = string to sign))`, sent
+ * as `X-CC-Signature: v1=<signature>`. The body is hashed as the exact bytes
+ * sent.
  */
 
-/** Compare two strings by their UTF-8 byte sequences. */
-function compareUtf8(a: string, b: string): number {
-  return Buffer.compare(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8'));
-}
+/** First line of the HMAC v1 string to sign. */
+export const HMAC_V1_SCOPE = 'CC-HMAC-SHA256-REQ-V1';
 
-function encodeString(s: string): string {
-  let out = '"';
-  for (let i = 0; i < s.length; i++) {
-    const c = s.charCodeAt(i);
-    switch (c) {
-      case 0x22:
-        out += '\\"';
-        break;
-      case 0x5c:
-        out += '\\\\';
-        break;
-      case 0x0a:
-        out += '\\n';
-        break;
-      case 0x0d:
-        out += '\\r';
-        break;
-      case 0x09:
-        out += '\\t';
-        break;
-      case 0x3c:
-        out += '\\u003c';
-        break;
-      case 0x3e:
-        out += '\\u003e';
-        break;
-      case 0x26:
-        out += '\\u0026';
-        break;
-      case 0x2028:
-        out += '\\u2028';
-        break;
-      case 0x2029:
-        out += '\\u2029';
-        break;
-      default:
-        if (c < 0x20) {
-          out += '\\u00' + c.toString(16).padStart(2, '0');
-        } else {
-          // Pass through, including surrogate halves - UTF-8 encoding at the
-          // base64 step reassembles them correctly.
-          out += s[i];
-        }
-    }
-  }
-  return out + '"';
-}
+/** Request headers of HMAC v1. `X-CC-Signature` carries `v1=<64 hex>`. */
+export const HMAC_V1_HEADERS = {
+  timestamp: 'X-CC-Timestamp',
+  nonce: 'X-CC-Nonce',
+  signature: 'X-CC-Signature',
+  idempotencyKey: 'Idempotency-Key',
+} as const;
 
-function encodeNumber(n: number): string {
-  if (!Number.isFinite(n)) {
-    throw new CryptoChiefError(`cryptochief: cannot canonicalize non-finite number ${n}`);
-  }
-  // Integers print without a decimal point. The API convention is to pass
-  // amounts as strings, so fractional numbers are not expected in signed bodies.
-  return n.toString();
-}
-
-function encodeValue(v: unknown): string {
-  if (v === null || v === undefined) return 'null';
-  switch (typeof v) {
-    case 'string':
-      return encodeString(v);
-    case 'boolean':
-      return v ? 'true' : 'false';
-    case 'number':
-      return encodeNumber(v);
-    case 'bigint':
-      return v.toString();
-    case 'object': {
-      if (Array.isArray(v)) {
-        return '[' + v.map((el) => encodeValue(el)).join(',') + ']';
-      }
-      const obj = v as Record<string, unknown>;
-      const keys = Object.keys(obj).filter((k) => obj[k] !== undefined && obj[k] !== null);
-      keys.sort(compareUtf8);
-      const parts = keys.map((k) => encodeString(k) + ':' + encodeValue(obj[k]));
-      return '{' + parts.join(',') + '}';
-    }
-    default:
-      throw new CryptoChiefError(`cryptochief: cannot canonicalize value of type ${typeof v}`);
-  }
+/** Fields of the HMAC v1 string to sign. */
+export interface HmacV1Input {
+  /** Unix time in seconds, decimal. */
+  timestamp: string;
+  /** 16–64 chars of `[A-Za-z0-9_-]`. */
+  nonce: string;
+  /** Signed upper-cased, `a`-`z` only; every other byte as it is. */
+  method: string;
+  /** API route path from `/v1/`, percent-decoded, without query and base URL prefix. */
+  path: string;
+  /** Query without `?`; empty when none. */
+  query?: string;
+  /** `Merchant` header value. */
+  merchant: string;
+  /** `Idempotency-Key` header value; empty when none. */
+  idempotencyKey?: string;
+  /** Body exactly as sent. A string is hashed as UTF-8. */
+  body?: string | Uint8Array;
 }
 
 /**
- * Produce the canonical JSON string for a value. `undefined`/`null` collapse to
- * an empty body, which signs as `md5(apiKey)`.
+ * Upper-cases `a`-`z` and leaves every other byte alone. The HTTP method is an
+ * RFC 9110 token; a Unicode mapping would rewrite bytes outside that range
+ * (`ı` to `I`, `ß` to `SS`) and the signature would stop matching the server's.
+ *
+ * @internal
  */
-export function canonicalJSON(value: unknown): string {
-  if (value === undefined || value === null) return '';
-  return encodeValue(value);
+export function upperAsciiMethod(method: string): string {
+  return method.replace(/[a-z]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 32));
 }
 
 /**
- * Compute the `Signature` header value for an already-canonical body:
- * `hex(md5(base64(canonicalBody) + apiKey))`. An empty body signs as
- * `md5(apiKey)`.
+ * An API key of nothing, or of spaces and tabs only, is no key: signing with it
+ * is an error and the server refuses the request.
+ *
+ * @internal
  */
-export function sign(canonicalBody: string, apiKey: string): string {
-  const b64 = Buffer.from(canonicalBody, 'utf8').toString('base64');
-  return createHash('md5')
-    .update(b64 + apiKey)
+export function isBlankApiKey(apiKey: unknown): boolean {
+  return typeof apiKey !== 'string' || /^[ \t]*$/.test(apiKey);
+}
+
+/** Lowercase hex SHA-256 of the body bytes. */
+export function hmacV1BodySha256(body: string | Uint8Array = ''): string {
+  return createHash('sha256')
+    .update(typeof body === 'string' ? Buffer.from(body, 'utf8') : body)
     .digest('hex');
 }
 
-/** Canonicalize then sign a value in one step. */
-export function signValue(value: unknown, apiKey: string): { canonical: string; signature: string } {
-  const canonical = canonicalJSON(value);
-  return { canonical, signature: sign(canonical, apiKey) };
+/**
+ * HMAC v1 string to sign: `CC-HMAC-SHA256-REQ-V1`, timestamp, nonce, METHOD,
+ * path, query, merchant, idempotency key, hex SHA-256 of the body, joined by
+ * `\n`. Throws {@link CryptoChiefError} when a field contains CR or LF.
+ */
+export function hmacV1StringToSign(input: HmacV1Input): string {
+  const fields = [
+    input.timestamp,
+    input.nonce,
+    upperAsciiMethod(input.method),
+    input.path,
+    input.query ?? '',
+    input.merchant,
+    input.idempotencyKey ?? '',
+  ];
+  for (const f of fields) {
+    if (/[\r\n]/.test(f)) {
+      throw new CryptoChiefError('cryptochief: hmac v1 field contains CR or LF');
+    }
+  }
+  return [HMAC_V1_SCOPE, ...fields, hmacV1BodySha256(input.body)].join('\n');
+}
+
+/**
+ * HMAC v1 signature: lowercase hex `HMAC-SHA256(key = apiKey, message =
+ * hmacV1StringToSign(input))`. The `X-CC-Signature` header value is `v1=` plus
+ * this.
+ *
+ * Throws {@link CryptoChiefError} when `apiKey` is empty or only spaces and
+ * tabs - the server refuses such a key, so there is nothing to sign with.
+ */
+export function signHmacV1(input: HmacV1Input, apiKey: string): string {
+  if (isBlankApiKey(apiKey)) throw new CryptoChiefError('cryptochief: apiKey is required');
+  return createHmac('sha256', Buffer.from(apiKey, 'utf8'))
+    .update(hmacV1StringToSign(input), 'utf8')
+    .digest('hex');
 }

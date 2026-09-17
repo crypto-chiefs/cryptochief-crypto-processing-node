@@ -21,12 +21,16 @@ export class CryptoChiefError extends Error {
 /**
  * Typed form of a Crypto Chief error response.
  *
- * The API returns either `{"error":"<CODE>","msg":"<sentence>","ok":false}` —
- * a refusal the gateway decided itself, code in `error` — or
- * `{"error":"SERVICE_ERROR","msg":"<CODE>","ok":false}` — a refusal relayed
- * from an upstream service, code in `msg`. Both resolve to {@link code}, the
- * stable identifier to switch on; {@link message} carries the human sentence
- * when the response has one, and {@link raw} the whole body:
+ * Recognized bodies:
+ *
+ * - `{"ok":false,"error":"<CODE>","msg":"<sentence>"}` — code in `error`;
+ * - `{"ok":false,"error":"SERVICE_ERROR","msg":"<CODE>"}` — code in `msg`;
+ * - `{"data":null,"error":{"status":...,"name":"<Name>","message":"<sentence>","details":{"code":"<CODE>"}}}` —
+ *   code in `error.details.code`, else `error.name`.
+ *
+ * All resolve to {@link code}, the stable identifier to switch on;
+ * {@link message} carries the human sentence when the response has one, and
+ * {@link raw} the whole body:
  *
  * ```ts
  * try {
@@ -49,14 +53,17 @@ export class ApiError extends CryptoChiefError {
   readonly code: string;
   /** Raw response body, verbatim. */
   readonly raw?: string;
+  /** `server_time` from the body (Unix seconds), when present - sent with `SIGNATURE_TIMESTAMP_OUT_OF_RANGE`. */
+  readonly serverTime?: number;
 
-  constructor(params: { httpStatus?: number; code: string; message?: string; raw?: string }) {
-    const { httpStatus = 0, code, message, raw } = params;
+  constructor(params: { httpStatus?: number; code: string; message?: string; raw?: string; serverTime?: number }) {
+    const { httpStatus = 0, code, message, raw, serverTime } = params;
     super(ApiError.format(httpStatus, code, message));
     this.name = 'ApiError';
     this.httpStatus = httpStatus;
     this.code = code;
     this.raw = raw;
+    this.serverTime = serverTime;
   }
 
   private static format(status: number, code: string, message?: string): string {
@@ -108,6 +115,16 @@ export const ErrorCode = {
   CallsRequired: 'CALLS_REQUIRED',
   CallsNotAllowed: 'CALLS_NOT_ALLOWED_FOR_TRANSFER',
   ContractCallsUnsupported: 'CONTRACT_CALLS_UNSUPPORTED_ON_NETWORK',
+  /** HMAC v1: `Merchant` or an `X-CC-*` header is missing, repeated or malformed (HTTP 400). */
+  BadAuthHeaders: 'BAD_AUTH_HEADERS',
+  /** HMAC v1: `X-CC-Timestamp` is more than 300 s off server time (HTTP 401). The body carries `server_time`. */
+  SignatureTimestampOutOfRange: 'SIGNATURE_TIMESTAMP_OUT_OF_RANGE',
+  /** HMAC v1: `X-CC-Signature` does not match (HTTP 401). */
+  InvalidSignature: 'INVALID_SIGNATURE',
+  /** HMAC v1: `X-CC-Nonce` was already used (HTTP 401). */
+  SignatureReplayed: 'SIGNATURE_REPLAYED',
+  /** Request body exceeds the gateway limit (HTTP 413). */
+  PayloadTooLarge: 'PAYLOAD_TOO_LARGE',
   NetworkError: 'NETWORK_ERROR',
 } as const;
 
