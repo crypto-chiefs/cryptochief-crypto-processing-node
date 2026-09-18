@@ -16,9 +16,11 @@ import { WebhooksService } from './services/webhooks';
 import { BlockchainService } from './services/blockchain';
 import { CurrenciesService } from './services/currencies';
 import { CreditsService } from './services/credits';
+import { EnergyService } from './services/energy';
+import { NativeService } from './services/native';
 
 /** SDK version, reported in the default `User-Agent`. */
-export const VERSION = '0.10.0';
+export const VERSION = '0.11.0';
 
 /** Production processing API endpoint. Test-mode projects share this host. */
 export const DEFAULT_BASE_URL = 'https://api-processing.crypto-chief.com';
@@ -151,6 +153,8 @@ export class CryptoChiefClient {
   readonly blockchain: BlockchainService;
   readonly currencies: CurrenciesService;
   readonly credits: CreditsService;
+  readonly energy: EnergyService;
+  readonly native: NativeService;
   readonly webhooks: WebhooksService;
 
   constructor(options: ClientOptions) {
@@ -188,6 +192,8 @@ export class CryptoChiefClient {
     this.blockchain = new BlockchainService(this);
     this.currencies = new CurrenciesService(this);
     this.credits = new CreditsService(this);
+    this.energy = new EnergyService(this);
+    this.native = new NativeService(this);
     this.webhooks = new WebhooksService(this);
   }
 

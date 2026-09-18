@@ -104,6 +104,8 @@ export * from './services/static-deposits';
 export * from './services/blockchain';
 export * from './services/currencies';
 export * from './services/credits';
+export * from './services/energy';
+export * from './services/native';
 export * from './services/webhooks';
 
 // Contract-call encoders

@@ -68,7 +68,7 @@ Both credentials come from the dashboard -> Integration tab.
 |---|---|---|
 | Single payout (incl. auto-convert swap) | `client.payouts` | `estimate`, `execute`, `info`, `history`, `waitFor` |
 | Mass payout (up to 50 items) | `client.payouts` | `batchEstimate`, `batchExecute` |
-| Two-phase sign / broadcast for arbitrary txs | `client.transactions` | `sign`, `execute`, `info`, `history`, `waitFor` |
+| Two-phase sign / broadcast for arbitrary txs | `client.transactions` | `estimate`, `sign`, `execute`, `info`, `history`, `waitFor` |
 | EVM / TRON contract calls (incl. ERC-20 / TRC-20) | `client.transactions` | `signEvmCall`, `signTronCall`, `erc20Transfer` |
 | Solana programs | `client.transactions` | `signAnchorCall`, `signSolanaCall` |
 | TON contract calls (Jetton / NFT / text) | `client.transactions` | `jettonTransfer`, `nftTransfer`, `sendTonComment`, `signTonCall` |
@@ -80,6 +80,8 @@ Both credentials come from the dashboard -> Integration tab.
 | On-chain queries | `client.blockchain` | `contractsAvailable`, `contractsList`, `supportedBlockchains`, `walletBalance`, `transactionStatus` |
 | Fiat <-> crypto rate quote | `client.currencies` | `fiatToCrypto`, `cryptoToFiat`, `fiats`, `cryptos` |
 | Billing credits (free of charge) | `client.credits` | `balance`, `topup` |
+| TRON energy rental | `client.energy` | `quote`, `rent`, `order` |
+| Native-coin purchase | `client.native` | `quote`, `buy`, `order` |
 
 ## End-to-end example: payout with confirmation
 
@@ -175,6 +177,111 @@ if (tx.status === TxStatus.Confirmed) {
   console.log(`in a block: ${tx.confirmations} of ${tx.requiredConfirmations}`);
 }
 ```
+
+### Estimating the fee before signing
+
+`transactions.estimate` prices a transfer **without signing or broadcasting** -
+the same transfer fields as `sign` minus `urlCallback`. `type: 'contract'` is
+refused with `CONTRACT_ESTIMATE_UNSUPPORTED`.
+
+```ts
+const est = await client.transactions.estimate({
+  network: Chain.EthSepolia,
+  fromAddress: '0xYourWallet...',
+  type: TxType.Native, // default; TxType.Token needs `contract`
+  toAddress: '0xRecipient...',
+  value: humanToBase('0.0001', 18).toString(), // base units (wei)
+});
+
+console.log(est.estimatedFee, est.estimatedFeeFiat); // network fee, native coin and USD
+console.log(est.required, est.requiredFiat);         // what the from-wallet must hold
+```
+
+`required` is the total native coin the sender needs: fee + value for a native
+transfer, the fee alone for a token transfer. The `*Fiat` fields are USD and
+come back as `''` when no rate is available.
+
+On TRON the response also carries the fee breakdown: `energyFee` +
+`bandwidthFee` + `activationFee` = `estimatedFee` (the gross figure, priced at
+an empty energy pool), plus `feeExpected` - what the transfer will probably
+burn given the wallet's current staked/delegated/rented energy - and
+`feeLimit`, the on-chain cap written into the transaction. `feeExpected` is
+not a funding guarantee: the pool can expire before broadcast, so fund
+`required`. Other networks omit all of these.
+
+## Renting TRON energy
+
+A TRON transfer can rent energy instead of burning TRX for it: the platform
+delegates energy to the sending address and bills the rental to the same
+credits balance as the rest of the API. `quote` is free and holds the price
+for about 90 seconds; `rent` buys, synchronously.
+
+```ts
+const q = await client.energy.quote({ receiveAddress: 'TYourSenderWallet...' });
+console.log(q.priceTrx, q.credits, q.savingTrx); // rental price, the charge, saving vs burning
+
+// Idempotency-Key is required - it is what makes a retry safe.
+const order = await client.energy.rent(
+  { quoteRef: q.ref }, // or { receiveAddress, energy, durationSec } to price and buy in one call
+  { idempotencyKey: 'rent-2026-09-18-0001' },
+);
+
+if (order.status === 'delivered') console.log('delegated:', order.deliveredEnergy);
+```
+
+`rent` always answers with the order: `delivered` means the energy is on the
+address; `refused` (HTTP 502, or 402 when the credits balance is short) means
+nothing was bought or charged and `order.error` / `order.errorCode` say why -
+retrying with the same key returns this same order, a new key re-attempts the
+rental; `unresolved` (HTTP 409, `needsAttention` on the order) means the
+supplier's answer never arrived and the energy may already be delegated - do
+**not** retry, fetch the order with `client.energy.order(key)` and reconcile.
+Only errors with no order to report (a spent quote, a gateway failure) throw
+an `ApiError`. On a `refused` order nothing was charged, so `credits` /
+`priceUsd` are absent rather than zero. `receiveAddress` is the SENDER of the
+transfer - the address the energy is delegated to.
+
+## Buying native coins
+
+The platform sells native coins (TRX, ETH, BNB, SOL, TON, ...) out of its own
+liquidity: it sends the coins to any address you name and pays the transfer
+fee itself, billing the charge to the same credits balance as the rest of the
+API. The price covers the coins at the market rate plus the platform's
+transfer fee: `totalUsd` is the full price and `credits` is exactly what the
+order will be charged. `quote` is free and holds the price for about 90
+seconds (single-use); `buy` buys, synchronously.
+
+```ts
+const q = await client.native.quote({
+  network: 'ETH_MAINNET',
+  receiveAddress: '0xRecipient...',
+  amount: '0.05', // human units
+});
+console.log(q.totalUsd, q.credits, q.transferFee); // price, the charge, the transfer's fee (included)
+
+// Idempotency-Key is required - it is what makes a retry safe.
+const order = await client.native.buy(
+  { quoteRef: q.ref }, // or { network, receiveAddress, amount } to price and buy in one call
+  { idempotencyKey: 'buy-2026-09-18-0001' },
+);
+
+if (order.status === 'delivered') console.log('sent: tx =', order.txHash);
+```
+
+`buy` always answers with the order: `delivered` means the coins were sent
+(`order.txHash`); `refused` (HTTP 502, or 402 when the credits balance is
+short - top up with `client.credits.topup(...)`) means nothing was sent or
+charged and `order.error` / `order.errorCode` say why - retrying with the
+same key returns this same order, a new key re-attempts the purchase;
+`unresolved` (HTTP 409, `needsAttention` on the order) means the coins may
+already have been sent - do **not** retry, fetch the order with
+`client.native.order(key)` and reconcile. Only errors with no order to report
+throw an `ApiError`: a 409 `QUOTE_EXPIRED` / `QUOTE_ALREADY_USED` means the
+quote is spent - quote again and buy. On a `refused` order `txHash`,
+`totalUsd` and `credits` are absent rather than zero, while the fee/rate
+fields (`transferFee`, `transferFeeUsd`, `coinPriceUsd`, `coinUsd`) come back
+empty (`''` / `'0.00'`). `receiveAddress` is any address you want funded -
+the merchant (you) pays, the platform covers the transfer itself.
 
 ## Contract calls - the easy way
 

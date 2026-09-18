@@ -91,6 +91,59 @@ export interface SignTransactionResponse {
   network?: Chain;
 }
 
+/**
+ * Fee-estimate request - the transfer fields of {@link SignTransactionRequest}
+ * without `urlCallback` (nothing is signed or sent, so no webhooks fire).
+ */
+export interface EstimateTransactionRequest {
+  network: Chain;
+  fromAddress: string;
+  /** `native` (default) or `token`. `contract` is refused with `CONTRACT_ESTIMATE_UNSUPPORTED`. */
+  type?: TxType;
+  /** Transfer-mode (native/token). */
+  toAddress?: string;
+  /** Transfer-mode value in BASE units (e.g. wei) as a decimal string. */
+  value?: string;
+  /** Token contract for `token` type. */
+  contract?: string;
+}
+
+export interface EstimateTransactionResponse {
+  network: Chain;
+  chainFamily: string;
+  type: TxType;
+  fromAddress: string;
+  toAddress?: string;
+  /** Network fee in the native coin (human-readable). */
+  estimatedFee: string;
+  /** `estimatedFee` in USD; empty string when no rate is available. */
+  estimatedFeeFiat?: string;
+  /** Total native coin the from-wallet must hold: fee+value for native, fee for token. */
+  required: string;
+  /** `required` in USD; empty string when no rate is available. */
+  requiredFiat?: string;
+
+  // TRON-only fee breakdown; absent entirely on other networks.
+
+  /**
+   * TRON only. What the transaction will probably burn given the wallet's
+   * current energy pool (staked/delegated/rented). NOT a funding guarantee -
+   * the pool can expire or be spent by another transfer before broadcast, so
+   * fund `required`, never this figure.
+   */
+  feeExpected?: string;
+  /** TRON only. The on-chain cap written into the transaction's `fee_limit`, not a charge. */
+  feeLimit?: string;
+  /** TRON only. Energy units the transaction needs (safety margin applied). */
+  energy?: number;
+  /** TRON only. TRX the energy burn costs at an empty pool. */
+  energyFee?: string;
+  /** TRON only. TRX the bandwidth burn costs at an empty pool. */
+  bandwidthFee?: string;
+  /** TRON only. TRX for activating a not-yet-existing recipient address (native transfers only). */
+  activationFee?: string;
+}
+
 export interface ExecuteTransactionRequest {
   uuid: string;
   /** Optional - only used for a client-vs-server byte-match check. */
@@ -250,6 +303,16 @@ function valueString(v: string | bigint | undefined): string {
  * Jetton/NFT/comment transfers.
  */
 export class TransactionsService extends BaseService {
+  /**
+   * Estimate the network fee for a transaction WITHOUT signing or broadcasting.
+   * Answers with the fee and the total native coin the from-wallet must hold.
+   * TRON responses also carry a fee breakdown (`energyFee` + `bandwidthFee` +
+   * `activationFee` = `estimatedFee`) and the resource-aware `feeExpected`.
+   */
+  estimate(req: EstimateTransactionRequest, opts?: RequestOptions): Promise<EstimateTransactionResponse> {
+    return this.call('/v1/transaction/estimate', req, opts);
+  }
+
   /**
    * Build and sign a transaction WITHOUT broadcasting. The signature has a
    * per-family TTL (EVM 10m, UTXO 15m, TRON 45s, Solana 60s, XRP 90s, TON 300s)

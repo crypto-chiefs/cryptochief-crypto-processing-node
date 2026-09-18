@@ -115,6 +115,8 @@ export const ErrorCode = {
   CallsRequired: 'CALLS_REQUIRED',
   CallsNotAllowed: 'CALLS_NOT_ALLOWED_FOR_TRANSFER',
   ContractCallsUnsupported: 'CONTRACT_CALLS_UNSUPPORTED_ON_NETWORK',
+  /** `type: 'contract'` on `/v1/transaction/estimate` - only native/token transfers can be estimated. */
+  ContractEstimateUnsupported: 'CONTRACT_ESTIMATE_UNSUPPORTED',
   /** HMAC v1: `Merchant` or an `X-CC-*` header is missing, repeated or malformed (HTTP 400). */
   BadAuthHeaders: 'BAD_AUTH_HEADERS',
   /** HMAC v1: `X-CC-Timestamp` is more than 300 s off server time (HTTP 401). The body carries `server_time`. */
