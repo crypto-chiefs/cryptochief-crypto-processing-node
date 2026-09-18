@@ -305,19 +305,18 @@ describe('request bodies', () => {
       }
       expect(c.headers).not.toHaveProperty('Signature');
       expect(c.headers['X-CC-Signature']).toBe(
-        'v1=' +
-          signHmacV1(
-            {
-              timestamp: c.headers['X-CC-Timestamp']!,
-              nonce: c.headers['X-CC-Nonce']!,
-              method: 'POST',
-              path,
-              merchant: 'M1',
-              idempotencyKey: c.headers['Idempotency-Key'],
-              body: c.body,
-            },
-            'secret',
-          ),
+        signHmacV1(
+          {
+            timestamp: c.headers['X-CC-Timestamp']!,
+            nonce: c.headers['X-CC-Nonce']!,
+            method: 'POST',
+            path,
+            merchant: 'M1',
+            idempotencyKey: c.headers['Idempotency-Key'],
+            body: c.body,
+          },
+          'secret',
+        ),
       );
     });
   }

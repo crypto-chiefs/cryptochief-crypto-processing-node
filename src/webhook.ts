@@ -1,7 +1,7 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { CryptoChiefError } from './errors';
-import { isBlankApiKey } from './sign';
+import { HMAC_V1_SIGNATURE_PREFIX, isBlankApiKey } from './sign';
 import { fromWire } from './case';
 import type { Chain, ChainFamily } from './chains';
 import type { PayInMode } from './services/payins';
@@ -19,7 +19,6 @@ import type { TransactionInfo, TxType } from './services/transactions';
  */
 
 const WEBHOOK_V1_SCOPE = 'CC-HMAC-SHA256-WEBHOOK-V1';
-const SIGNATURE_PREFIX = 'v1=';
 const DEFAULT_TOLERANCE_SEC = 300;
 const INT64_MAX = 9223372036854775807n;
 const DELIVERY_ID = /^[A-Za-z0-9_-]{1,128}$/;
@@ -151,7 +150,7 @@ export function signWebhookV1(
   body: string | Uint8Array,
 ): string {
   if (isBlankApiKey(apiKey)) throw new CryptoChiefError('cryptochief: apiKey is required');
-  return SIGNATURE_PREFIX + mac(apiKey, webhookV1StringToSign(timestamp, deliveryId, body)).toString('hex');
+  return HMAC_V1_SIGNATURE_PREFIX + mac(apiKey, webhookV1StringToSign(timestamp, deliveryId, body)).toString('hex');
 }
 
 function headerValues(headers: WebhookHeaders, name: string): string[] {
@@ -247,7 +246,7 @@ export function verifyWebhook(
   if (timestamp <= 0n) throw new WebhookVerificationError('headers');
 
   const expected = mac(apiKey, stringToSign(timestamp.toString(), deliveryId, body));
-  const given = Buffer.from(signature.slice(SIGNATURE_PREFIX.length), 'hex');
+  const given = Buffer.from(signature.slice(HMAC_V1_SIGNATURE_PREFIX.length), 'hex');
   if (given.length !== expected.length || !timingSafeEqual(expected, given)) {
     throw new WebhookVerificationError('signature');
   }

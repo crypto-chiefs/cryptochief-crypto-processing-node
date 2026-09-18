@@ -45,6 +45,7 @@ export {
   hmacV1BodySha256,
   HMAC_V1_SCOPE,
   HMAC_V1_HEADERS,
+  HMAC_V1_SIGNATURE_PREFIX,
   type HmacV1Input,
 } from './sign';
 

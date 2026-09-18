@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { CryptoChiefError, ErrorCode } from '../src/errors';
-import { hmacV1BodySha256, hmacV1StringToSign, signHmacV1, type HmacV1Input } from '../src/sign';
+import { hmacV1BodySha256, hmacV1StringToSign, signHmacV1, HMAC_V1_SIGNATURE_PREFIX, type HmacV1Input } from '../src/sign';
 import { checkHmacV1, type HmacV1Outcome, type SignedRequest } from './gateway-hmac-v1';
 import {
   REQUEST_VECTORS_SHA256,
@@ -54,14 +54,14 @@ describe('HMAC v1 gateway vectors', () => {
       // refusals included.
       expect(hmacV1BodySha256(v.body)).toBe(v.body_sha256);
       expect(hmacV1StringToSign(inputOf(v))).toBe(v.string_to_sign);
-      expect(signHmacV1(inputOf(v), v.api_key)).toBe(v.signature);
+      expect(signHmacV1(inputOf(v), v.api_key)).toBe(HMAC_V1_SIGNATURE_PREFIX + v.signature);
       // Same bytes as a Uint8Array body, lower-case method.
       const bytes = {
         ...inputOf(v),
         method: v.method.toLowerCase(),
         body: new Uint8Array(Buffer.from(v.body, 'utf8')),
       };
-      expect(signHmacV1(bytes, v.api_key)).toBe(v.signature);
+      expect(signHmacV1(bytes, v.api_key)).toBe(HMAC_V1_SIGNATURE_PREFIX + v.signature);
 
       // Verifying side: exactly the outcome the record claims.
       expect(verify(v)).toBe(v.expect);
@@ -81,7 +81,28 @@ describe('HMAC v1 gateway vectors', () => {
   it('omitted query, idempotency key and body sign as empty', () => {
     const v = requestVector('empty_body');
     const { query: _q, idempotencyKey: _i, body: _b, ...rest } = inputOf(v);
-    expect(signHmacV1(rest, v.api_key)).toBe(v.signature);
+    expect(signHmacV1(rest, v.api_key)).toBe(HMAC_V1_SIGNATURE_PREFIX + v.signature);
+  });
+
+  // The value signHmacV1 returns goes into X-CC-Signature untouched, and the
+  // verifying side accepts it.
+  it('roundtrip: the returned header value verifies as sent', () => {
+    const v = requestVector('empty_body');
+    const signature = signHmacV1(inputOf(v), v.api_key);
+    expect(signature).toMatch(/^v1=[0-9a-f]{64}$/);
+    const req: SignedRequest = {
+      method: v.method,
+      path: v.path,
+      rawQuery: v.query,
+      headers: [
+        ['Merchant', v.merchant],
+        ['X-CC-Timestamp', v.timestamp],
+        ['X-CC-Nonce', v.nonce],
+        ['X-CC-Signature', signature],
+      ],
+      body: Buffer.from(v.body, 'utf8'),
+    };
+    expect(checkHmacV1(req, { keys: { [v.merchant]: v.api_key }, nowSec: v.now })).toBe('ok');
   });
 
   it('rejects CR or LF in a field', () => {

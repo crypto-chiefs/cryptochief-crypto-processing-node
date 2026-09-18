@@ -12,6 +12,9 @@ import { CryptoChiefError } from './errors';
 /** First line of the HMAC v1 string to sign. */
 export const HMAC_V1_SCOPE = 'CC-HMAC-SHA256-REQ-V1';
 
+/** Prefix of the HMAC v1 `X-CC-Signature` header value, before the hex. */
+export const HMAC_V1_SIGNATURE_PREFIX = 'v1=';
+
 /** Request headers of HMAC v1. `X-CC-Signature` carries `v1=<64 hex>`. */
 export const HMAC_V1_HEADERS = {
   timestamp: 'X-CC-Timestamp',
@@ -92,16 +95,19 @@ export function hmacV1StringToSign(input: HmacV1Input): string {
 }
 
 /**
- * HMAC v1 signature: lowercase hex `HMAC-SHA256(key = apiKey, message =
- * hmacV1StringToSign(input))`. The `X-CC-Signature` header value is `v1=` plus
- * this.
+ * HMAC v1 signature: the `X-CC-Signature` header value, `v1=` and lowercase
+ * hex `HMAC-SHA256(key = apiKey, message = hmacV1StringToSign(input))` - the
+ * same wire form `signWebhookV1` returns.
  *
  * Throws {@link CryptoChiefError} when `apiKey` is empty or only spaces and
  * tabs - the server refuses such a key, so there is nothing to sign with.
  */
 export function signHmacV1(input: HmacV1Input, apiKey: string): string {
   if (isBlankApiKey(apiKey)) throw new CryptoChiefError('cryptochief: apiKey is required');
-  return createHmac('sha256', Buffer.from(apiKey, 'utf8'))
-    .update(hmacV1StringToSign(input), 'utf8')
-    .digest('hex');
+  return (
+    HMAC_V1_SIGNATURE_PREFIX +
+    createHmac('sha256', Buffer.from(apiKey, 'utf8'))
+      .update(hmacV1StringToSign(input), 'utf8')
+      .digest('hex')
+  );
 }

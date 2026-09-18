@@ -52,21 +52,18 @@ function hmacFor(
   idempotencyKey = '',
   method = 'POST',
 ): string {
-  return (
-    'v1=' +
-    signHmacV1(
-      {
-        timestamp: c.headers['X-CC-Timestamp']!,
-        nonce: c.headers['X-CC-Nonce']!,
-        method,
-        path,
-        query,
-        merchant,
-        idempotencyKey,
-        body: c.body,
-      },
-      apiKey,
-    )
+  return signHmacV1(
+    {
+      timestamp: c.headers['X-CC-Timestamp']!,
+      nonce: c.headers['X-CC-Nonce']!,
+      method,
+      path,
+      query,
+      merchant,
+      idempotencyKey,
+      body: c.body,
+    },
+    apiKey,
   );
 }
 

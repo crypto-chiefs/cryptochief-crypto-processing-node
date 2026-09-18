@@ -20,7 +20,7 @@ import { EnergyService } from './services/energy';
 import { NativeService } from './services/native';
 
 /** SDK version, reported in the default `User-Agent`. */
-export const VERSION = '0.11.0';
+export const VERSION = '0.12.0';
 
 /** Production processing API endpoint. Test-mode projects share this host. */
 export const DEFAULT_BASE_URL = 'https://api-processing.crypto-chief.com';
@@ -248,7 +248,7 @@ export class CryptoChiefClient {
 
       const timestamp = String(Math.floor(Date.now() / 1000) + this.clockOffsetSec);
       const nonce = randomBytes(16).toString('hex');
-      const hmac = signHmacV1(
+      const signature = signHmacV1(
         {
           timestamp,
           nonce,
@@ -270,7 +270,7 @@ export class CryptoChiefClient {
       if (idempotencyKey) headers[HMAC_V1_HEADERS.idempotencyKey] = idempotencyKey;
       headers[HMAC_V1_HEADERS.timestamp] = timestamp;
       headers[HMAC_V1_HEADERS.nonce] = nonce;
-      headers[HMAC_V1_HEADERS.signature] = 'v1=' + hmac;
+      headers[HMAC_V1_HEADERS.signature] = signature;
       headers['User-Agent'] = this.userAgent;
 
       let resp: Response;

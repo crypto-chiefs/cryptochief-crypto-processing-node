@@ -486,6 +486,7 @@ from `server_time` and repeats the request once.
 ```ts
 import { signHmacV1, hmacV1StringToSign } from '@cryptochiefs/cryptochief-crypto-processing-node';
 
+// The full X-CC-Signature header value, sent as-is.
 const sig = signHmacV1({
   timestamp: '1789430400',
   nonce: '00112233445566778899aabbccddeeff',
@@ -494,7 +495,7 @@ const sig = signHmacV1({
   merchant: '3f2a1b4c-5d6e-7f80-9a1b-2c3d4e5f6071',
   body: '{"address":"TLa2f6VPqDgRE67v1736s7bJ8Ray5wYjU7"}',
 }, 'test_api_key_123');
-// f49f43924c6f6596671e559c8c97d55950da3f3b039adbf198a5efbd5ba64088
+// v1=f49f43924c6f6596671e559c8c97d55950da3f3b039adbf198a5efbd5ba64088
 ```
 
 For an endpoint the SDK does not model, `client.send(method, path, body?, opts?)`
