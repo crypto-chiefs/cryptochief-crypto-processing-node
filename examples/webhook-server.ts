@@ -42,7 +42,7 @@ const handler = createWebhookHandler<WebhookEvent>(apiKey, (evt, { req, res }) =
       // action: paid | system_fail -> reconcile your ledger
       break;
     case 'transaction':
-      // action: confirmed | failed | expired
+      // action: confirmed | failed | expired | cancelled
       break;
     case 'invoice':
       // pay-in lifecycle: paid | paid_over | paid_less | canceled | expired ...

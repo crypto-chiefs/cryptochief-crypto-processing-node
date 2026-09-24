@@ -34,9 +34,14 @@ export const TxStatus = {
   Confirmed: 'confirmed',
   Failed: 'failed',
   Expired: 'expired',
+  /**
+   * EVM: replaced by a newer signature from the same address before it was
+   * executed; `errorReason` is `SUPERSEDED_BY:<new uuid>`.
+   */
+  Cancelled: 'cancelled',
 } as const;
 
-const TERMINAL = new Set<string>([TxStatus.Confirmed, TxStatus.Failed, TxStatus.Expired]);
+const TERMINAL = new Set<string>([TxStatus.Confirmed, TxStatus.Failed, TxStatus.Expired, TxStatus.Cancelled]);
 
 /** Whether a transaction status is final. */
 export function isTransactionTerminal(status: string): boolean {
@@ -89,6 +94,11 @@ export interface SignTransactionResponse {
   expiresAt: string;
   chainFamily: string;
   network?: Chain;
+  /**
+   * EVM: uuids of the earlier unexecuted signatures from the same address that
+   * this one replaced; they turn `cancelled`. Absent when there were none.
+   */
+  supersededUuids?: string[];
 }
 
 /**
@@ -173,6 +183,14 @@ export interface TransactionInfo {
   requiredConfirmations?: number;
   createdAt?: string;
   updatedAt?: string;
+  /**
+   * Why the transaction is `failed`, `expired` or `cancelled`
+   * (`SUPERSEDED_BY:<uuid>`), or why a `signed` one could not be executed yet
+   * (`NONCE_GAP: missing_nonce=<n> blocking_uuid=<uuid>`,
+   * `NONCE_ALREADY_USED: chain_nonce=<n>`).
+   */
+  errorReason?: string;
+  /** @deprecated Not sent by the API; read `errorReason`. */
   error?: string;
 }
 

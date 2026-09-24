@@ -20,7 +20,7 @@ import { EnergyService } from './services/energy';
 import { NativeService } from './services/native';
 
 /** SDK version, reported in the default `User-Agent`. */
-export const VERSION = '0.12.0';
+export const VERSION = '0.13.0';
 
 /** Production processing API endpoint. Test-mode projects share this host. */
 export const DEFAULT_BASE_URL = 'https://api-processing.crypto-chief.com';

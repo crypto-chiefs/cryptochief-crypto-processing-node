@@ -432,7 +432,7 @@ export interface PayoutWebhookEvent {
   errorReason?: string;
 }
 
-/** Transaction webhook. Fires only on terminal status (`transaction.confirmed`/`failed`/`expired`). */
+/** Transaction webhook. Fires only on terminal status (`transaction.confirmed`/`failed`/`expired`/`cancelled`). */
 export interface TransactionWebhookEvent {
   event: string;
   uuid: string;

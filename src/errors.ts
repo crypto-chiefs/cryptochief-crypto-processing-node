@@ -109,6 +109,21 @@ export const ErrorCode = {
   AlreadyExecuted: 'ALREADY_EXECUTED',
   PreflightFailed: 'PREFLIGHT_FAILED',
   BroadcastFailed: 'BROADCAST_FAILED',
+  /**
+   * EVM execute: a lower nonce of the address is held by another signature that
+   * was not executed. Nothing was sent; the transaction's `errorReason` names
+   * that signature when it is known. Execute it first, then retry the same uuid.
+   */
+  NonceGap: 'NONCE_GAP',
+  /** EVM execute: the chain already used this transaction's nonce. Nothing was sent by this call. */
+  NonceAlreadyUsed: 'NONCE_ALREADY_USED',
+  /**
+   * EVM sign: an earlier signature from the same address has an execute whose
+   * outcome is not known yet. The code may carry that signature's uuid
+   * (`PREVIOUS_EXECUTE_UNRESOLVED: uuid=<uuid>`); compare with
+   * `code.startsWith(...)`. Retry execute of that uuid instead of signing again.
+   */
+  PreviousExecuteUnresolved: 'PREVIOUS_EXECUTE_UNRESOLVED',
   SignedTxMismatch: 'SIGNED_TX_MISMATCH',
   ContractRequiredForToken: 'CONTRACT_REQUIRED_FOR_TOKEN',
   TransferFieldsForbidden: 'TRANSFER_FIELDS_NOT_ALLOWED_FOR_CONTRACT',
