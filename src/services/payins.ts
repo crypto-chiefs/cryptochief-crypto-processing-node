@@ -18,6 +18,8 @@ export const PayInStatus = {
   Pending: 'pending',
   Processing: 'processing',
   Process: 'process',
+  /** Multi-payment orders: payments arrived, but the required amount is not accumulated yet. Not terminal. */
+  WrongAmountWaiting: 'wrong_amount_waiting',
   Paid: 'paid',
   Cancel: 'cancel',
   Expired: 'expired',
@@ -69,7 +71,22 @@ export interface CreatePayInRequest {
   urlSuccess?: string;
   urlError?: string;
   additionalData?: string;
+  /**
+   * Allowed underpayment/overpayment percent: min 0, max 15, default 5.
+   * Pass `-1` to accept any amount - the final status then resolves to
+   * `paid` / `paid_less` / `paid_over` by direction, and the deposit address
+   * is exclusive to the order (no second order may share it, except on
+   * XRP Ledger, where the destination tag identifies orders).
+   */
   accuracyPaymentPercent?: number;
+  /**
+   * Allow the invoice to be paid in several transfers: a partial payment moves
+   * the order to `wrong_amount_waiting` instead of closing it, a webhook fires
+   * on every incoming transfer, and the remainder can be topped up to the same
+   * address for 1 hour past `expiredAt`. An underpaid order then finalizes as
+   * `paid_less`, an unpaid one as `expired`. Default false.
+   */
+  isPaymentMultiple?: boolean;
   /** FIAT-mode: amount in fiat. */
   amountFiat?: string;
   /** FIAT-mode: fiat currency code. */
@@ -89,6 +106,17 @@ export interface CoinOption {
   coin: string;
   network: Chain;
   contract?: string;
+}
+
+/** One credited transfer of a multi-payment pay-in; see {@link PayIn.payments}. */
+export interface PayInPayment {
+  txid: string;
+  /** Amount of this transfer, in coin units. */
+  amountCrypto: string;
+  confirmations?: number;
+  status?: string;
+  /** When the platform first saw the transfer. */
+  seenAt?: string;
 }
 
 export interface PayIn {
@@ -114,6 +142,14 @@ export interface PayIn {
   expiredAt?: string;
   createdAt?: string;
   updatedAt?: string;
+  /** `true` on orders created with `isPaymentMultiple`; absent otherwise. */
+  isPaymentMultiple?: boolean;
+  /** Multi-payment orders: sum of every credited transfer, in coin units. */
+  receivedAmountCrypto?: string;
+  /** Multi-payment orders: the amount still left to pay, in coin units. */
+  remainingAmountCrypto?: string;
+  /** Multi-payment orders: every credited transfer, in arrival order. */
+  payments?: PayInPayment[];
 }
 
 export interface PayInHistoryResponse {

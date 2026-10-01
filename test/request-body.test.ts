@@ -121,6 +121,21 @@ const cases: Case[] = [
     '{"amount_crypto":"0.1","asset":{"network":"ETH_MAINNET"},"mode":"crypto","order_id":"o-2","user_id":"user-2"}',
   ],
   [
+    'payIns.create, wildcard accuracy and multiple payments',
+    '/v1/payments/order/create',
+    (c) =>
+      c.payIns.create({
+        orderId: 'o-3',
+        userId: 'user-3',
+        mode: 'crypto',
+        amountCrypto: '0.5',
+        asset: { network: 'TRON_MAINNET', coin: 'USDT' },
+        accuracyPaymentPercent: -1,
+        isPaymentMultiple: true,
+      }),
+    '{"accuracy_payment_percent":-1,"amount_crypto":"0.5","asset":{"coin":"USDT","network":"TRON_MAINNET"},"is_payment_multiple":true,"mode":"crypto","order_id":"o-3","user_id":"user-3"}',
+  ],
+  [
     'payIns.selectAsset, masterWalletAddress null',
     '/v1/payments/asset/select',
     (c) => c.payIns.selectAsset({ uuid: 'u', coin: 'USDT', network: 'TRON_MAINNET', masterWalletAddress: N }),

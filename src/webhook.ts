@@ -4,7 +4,7 @@ import { CryptoChiefError } from './errors';
 import { HMAC_V1_SIGNATURE_PREFIX, isBlankApiKey } from './sign';
 import { fromWire } from './case';
 import type { Chain, ChainFamily } from './chains';
-import type { PayInMode } from './services/payins';
+import type { PayInMode, PayInPayment } from './services/payins';
 import type { PayoutInfo, PayoutServiceOperation, PayoutSource } from './services/payouts';
 import type { TransactionInfo, TxType } from './services/transactions';
 
@@ -454,7 +454,17 @@ export interface TransactionWebhookEvent {
   errorReason?: string;
 }
 
-/** Pay-in webhook. Event names carry the `invoice.` prefix (e.g. `invoice.paid`). */
+/**
+ * Pay-in webhook. Event names carry the `invoice.` prefix (e.g. `invoice.paid`).
+ *
+ * Orders created with `isPaymentMultiple` additionally emit
+ * `invoice.wrong_amount_waiting` on EVERY incoming transfer while the
+ * accumulated amount is below the required one (status `wrong_amount_waiting`),
+ * and `invoice.late_payment` for a transfer that arrives after the final status
+ * inside the watch window - the order status does not change on the latter.
+ * Their payloads carry `isPaymentMultiple`, `receivedAmountCrypto`,
+ * `remainingAmountCrypto` and `payments`.
+ */
 export interface PayInWebhookEvent {
   event: string;
   uuid: string;
@@ -472,6 +482,14 @@ export interface PayInWebhookEvent {
   paymentNetwork?: Chain;
   toAddress?: string;
   txid?: string;
+  /** `true` on orders created with `isPaymentMultiple`; absent otherwise. */
+  isPaymentMultiple?: boolean;
+  /** Multi-payment orders: sum of every credited transfer, in coin units. */
+  receivedAmountCrypto?: string;
+  /** Multi-payment orders: the amount still left to pay, in coin units. */
+  remainingAmountCrypto?: string;
+  /** Multi-payment orders: every credited transfer, in arrival order. */
+  payments?: PayInPayment[];
 }
 
 /** Static-deposit webhook. Event names carry the `static_deposit.` prefix. */

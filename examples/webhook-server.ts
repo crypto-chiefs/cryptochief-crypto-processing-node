@@ -46,6 +46,9 @@ const handler = createWebhookHandler<WebhookEvent>(apiKey, (evt, { req, res }) =
       break;
     case 'invoice':
       // pay-in lifecycle: paid | paid_over | paid_less | canceled | expired ...
+      // Multi-payment orders (isPaymentMultiple) add wrong_amount_waiting on
+      // every top-up and late_payment after the final status; those events
+      // carry receivedAmountCrypto / remainingAmountCrypto / payments[].
       break;
     case 'static_deposit':
       // mempool | found | confirming | paid | reorged

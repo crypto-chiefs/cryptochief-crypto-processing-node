@@ -355,6 +355,82 @@ describe('parseWebhookEvent', () => {
   });
 });
 
+describe('multi-payment pay-in payload', () => {
+  it('parses invoice.wrong_amount_waiting with the accumulated amounts and every payment', () => {
+    const { raw, headers } = signed({
+      event: 'invoice.wrong_amount_waiting',
+      uuid: 'inv-1',
+      order_id: 'o-1',
+      status: 'wrong_amount_waiting',
+      prev_status: 'pending',
+      is_payment_multiple: true,
+      amount_crypto: '10',
+      received_amount_crypto: '6.5',
+      remaining_amount_crypto: '3.5',
+      payments: [
+        { txid: '0xaaa', amount_crypto: '4', confirmations: 12, status: 'confirmed', seen_at: '2026-09-30T10:00:00Z' },
+        { txid: '0xbbb', amount_crypto: '2.5', confirmations: 3, status: 'pending', seen_at: '2026-09-30T10:05:00Z' },
+      ],
+    });
+
+    const evt = parseWebhookEvent<PayInWebhookEvent>(KEY, raw, headers, AT);
+
+    expect(evt.event).toBe('invoice.wrong_amount_waiting');
+    expect(evt.status).toBe('wrong_amount_waiting');
+    expect(evt.isPaymentMultiple).toBe(true);
+    expect(evt.receivedAmountCrypto).toBe('6.5');
+    expect(evt.remainingAmountCrypto).toBe('3.5');
+    expect(evt.payments).toHaveLength(2);
+    expect(evt.payments?.[0]).toEqual({
+      txid: '0xaaa',
+      amountCrypto: '4',
+      confirmations: 12,
+      status: 'confirmed',
+      seenAt: '2026-09-30T10:00:00Z',
+    });
+    expect(evt.payments?.[1]?.txid).toBe('0xbbb');
+    expect(evt.payments?.reduce((sum, p) => sum + Number(p.amountCrypto), 0)).toBe(6.5);
+  });
+
+  it('parses invoice.late_payment without changing the terminal status', () => {
+    const { raw, headers } = signed({
+      event: 'invoice.late_payment',
+      uuid: 'inv-2',
+      order_id: 'o-2',
+      status: 'paid_less',
+      prev_status: 'paid_less',
+      is_payment_multiple: true,
+      received_amount_crypto: '9.5',
+      remaining_amount_crypto: '0',
+      payments: [
+        { txid: '0xccc', amount_crypto: '9', confirmations: 20, status: 'confirmed', seen_at: '2026-09-30T10:00:00Z' },
+        { txid: '0xddd', amount_crypto: '0.5', confirmations: 1, status: 'late', seen_at: '2026-09-30T11:30:00Z' },
+      ],
+    });
+
+    const evt = parseWebhookEvent<PayInWebhookEvent>(KEY, raw, headers, AT);
+
+    expect(evt.event).toBe('invoice.late_payment');
+    expect(evt.status).toBe('paid_less');
+    expect(evt.isPaymentMultiple).toBe(true);
+    expect(evt.remainingAmountCrypto).toBe('0');
+    expect(evt.payments).toHaveLength(2);
+    expect(evt.payments?.[1]?.seenAt).toBe('2026-09-30T11:30:00Z');
+  });
+
+  it('leaves the multi-payment fields absent on a payload that predates them', () => {
+    const { raw, headers } = signed({ event: 'invoice.paid', uuid: 'inv-3', order_id: 'o-3', status: 'paid' });
+
+    const evt = parseWebhookEvent<PayInWebhookEvent>(KEY, raw, headers, AT);
+
+    expect(evt.isPaymentMultiple).toBeUndefined();
+    expect(evt.receivedAmountCrypto).toBeUndefined();
+    expect(evt.remainingAmountCrypto).toBeUndefined();
+    expect(evt.payments).toBeUndefined();
+    expect('payments' in evt).toBe(false);
+  });
+});
+
 describe('confirmation counts on webhook payloads', () => {
   it('types the payout counts per source, per service operation and overall', () => {
     const { raw, headers } = signed({

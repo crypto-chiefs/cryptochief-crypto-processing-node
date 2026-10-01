@@ -569,6 +569,11 @@ app.post('/webhook/payout', express.raw({ type: '*/*' }), (req, res) => {
 
 Typed payloads: `PayoutWebhookEvent`, `TransactionWebhookEvent`,
 `PayInWebhookEvent`, `StaticDepositWebhookEvent`, `SweepWebhookEvent`.
+Multi-payment pay-ins also fire `invoice.wrong_amount_waiting` on every incoming
+transfer while the invoice is underpaid, and `invoice.late_payment` for a
+transfer arriving after the final status; both carry `isPaymentMultiple`,
+`receivedAmountCrypto`, `remainingAmountCrypto` and `payments[]`
+(`{ txid, amountCrypto, confirmations, status, seenAt }`).
 
 ## Error handling
 
@@ -679,7 +684,10 @@ The [`examples/`](./examples) directory has copy-pasteable programs (run with
 
 **How do I accept a crypto payment in Node.js?**
 `client.payIns.create(...)` opens an invoice; the customer gets a deposit address
-and you receive a signed webhook when it's paid.
+and you receive a signed webhook when it's paid. `accuracyPaymentPercent` sets
+the accepted under/overpayment (0..15, default 5; `-1` accepts any amount and
+the final status resolves to `paid` / `paid_less` / `paid_over` by direction),
+and `isPaymentMultiple: true` lets one invoice be paid in several transfers.
 
 **How do I send a crypto payout (withdrawal) in Node.js / TypeScript?**
 `client.payouts.execute(...)` with `coin` / `network` / `amount` / `toAddress`.
