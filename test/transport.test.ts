@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { CryptoChiefClient, type ClientOptions } from '../src/client';
-import { ApiError, ErrorCode, isApiError } from '../src/errors';
-import { parseApiError } from '../src/transport';
+import { ApiError, ErrorCode, isApiError, isRetryable } from '../src/errors';
+import { networkError, parseApiError } from '../src/transport';
+import { waitForTerminal } from '../src/poll';
 
 interface Captured {
   url: string;
@@ -183,14 +184,58 @@ describe('transport', () => {
     expect(parseApiError(400, JSON.stringify({ ok: false, error: 'INVALID_PARAMS', server_time: '5' })).serverTime).toBeUndefined();
   });
 
-  it('retries 5xx then succeeds', async () => {
+  it.each([502, 503, 504])('retries %d then succeeds', async (status) => {
     const { client, calls } = makeClient((attempt) =>
       attempt === 0
-        ? new Response('upstream', { status: 503 })
+        ? new Response('upstream', { status })
         : new Response(JSON.stringify({ uuid: 'u1', status: 'queue' }), { status: 200 }),
     );
     const res = await client.payouts.info('u1');
     expect(res.uuid).toBe('u1');
+    expect(calls.length).toBe(2);
+  });
+
+  it.each([502, 503, 504])('makes retries+1 attempts while %d persists, then throws it', async (status) => {
+    const { client, calls } = makeClient(() => new Response('upstream', { status }), { retries: 2 });
+    const err = await client.payouts.info('u1').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).httpStatus).toBe(status);
+    expect((err as ApiError).code).toBe(`HTTP_${status}`);
+    expect(calls.length).toBe(3);
+  });
+
+  it('makes 4 attempts on a persistent 503 with the default retries', async () => {
+    const { client, calls } = makeClient(() => new Response('upstream', { status: 503 }));
+    await expect(client.payouts.info('u1')).rejects.toBeInstanceOf(ApiError);
+    expect(calls.length).toBe(4);
+  });
+
+  it('attempts a 500 exactly once', async () => {
+    const body = JSON.stringify({ ok: false, error: 'INTERNAL_ERROR', msg: 'internal error' });
+    const { client, calls } = makeClient(() => new Response(body, { status: 500 }));
+    const err = await client.payouts.info('u1').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).httpStatus).toBe(500);
+    expect((err as ApiError).code).toBe('INTERNAL_ERROR');
+    expect((err as ApiError).message).toBe('cryptochief: 500 INTERNAL_ERROR: internal error');
+    expect((err as ApiError).raw).toBe(body);
+    expect(calls.length).toBe(1);
+  });
+
+  it.each([429, 501, 505, 507, 520, 599])('attempts a %d exactly once', async (status) => {
+    const { client, calls } = makeClient(() => new Response('nope', { status }));
+    const err = await client.payouts.info('u1').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).httpStatus).toBe(status);
+    expect(calls.length).toBe(1);
+  });
+
+  it('stops at a 500 that follows a retried 503', async () => {
+    const { client, calls } = makeClient((attempt) =>
+      new Response('x', { status: attempt === 0 ? 503 : 500 }),
+    );
+    const err = await client.payouts.info('u1').catch((e: unknown) => e);
+    expect((err as ApiError).httpStatus).toBe(500);
     expect(calls.length).toBe(2);
   });
 
@@ -219,11 +264,93 @@ describe('transport', () => {
     expect(calls.length).toBe(2);
   });
 
+  it('makes retries+1 attempts while the network keeps failing, then throws NETWORK_ERROR', async () => {
+    let calls = 0;
+    const client = new CryptoChiefClient({
+      merchantId: 'M',
+      apiKey: 'k',
+      fetch: async () => {
+        calls++;
+        throw new TypeError('fetch failed');
+      },
+      retries: 2,
+      retryBackoff: { baseMs: 1, maxMs: 2 },
+    });
+    const err = await client.payouts.info('u2').catch((e: unknown) => e);
+    expect(isApiError(err, ErrorCode.NetworkError)).toBe(true);
+    expect((err as ApiError).httpStatus).toBe(0);
+    expect((err as ApiError).message).toBe('cryptochief: NETWORK_ERROR');
+    expect(calls).toBe(3);
+  });
+
+  it('retries a response body that fails to read', async () => {
+    const { client, calls } = makeClient((attempt) =>
+      attempt === 0
+        ? new Response(new ReadableStream({ start: (c) => c.error(new Error('socket reset')) }), { status: 200 })
+        : new Response(JSON.stringify({ uuid: 'u3' }), { status: 200 }),
+    );
+    const res = await client.payouts.info('u3');
+    expect(res.uuid).toBe('u3');
+    expect(calls.length).toBe(2);
+  });
+
   it('propagates caller cancellation without retrying', async () => {
     const ac = new AbortController();
     ac.abort();
     const { client, calls } = makeClient(() => new Response('{}', { status: 200 }));
     await expect(client.payouts.info('x', { signal: ac.signal })).rejects.toBeTruthy();
     expect(calls.length).toBe(0);
+  });
+});
+
+describe('isRetryable', () => {
+  it('accepts 502, 503, 504 and network errors only', () => {
+    for (const status of [502, 503, 504]) {
+      expect(isRetryable(parseApiError(status, 'upstream'))).toBe(true);
+    }
+    for (const status of [400, 401, 404, 409, 429, 500, 501, 505, 507, 520, 599]) {
+      expect(isRetryable(parseApiError(status, 'x'))).toBe(false);
+    }
+    expect(isRetryable(parseApiError(500, JSON.stringify({ ok: false, error: 'INTERNAL_ERROR' })))).toBe(false);
+    expect(isRetryable(parseApiError(500, JSON.stringify({ ok: false, error: 'NETWORK_ERROR' })))).toBe(false);
+    expect(isRetryable(networkError('connect ECONNREFUSED'))).toBe(true);
+    expect(isRetryable(new TypeError('fetch failed'))).toBe(true);
+    expect(isRetryable(new ApiError({ code: 'SOMETHING_ELSE' }))).toBe(false);
+    expect(isRetryable('fetch failed')).toBe(false);
+    expect(isRetryable(undefined)).toBe(false);
+  });
+});
+
+describe('waitForTerminal', () => {
+  const poll = { intervalMs: 1, timeoutMs: 5_000 };
+
+  it('throws a 500 on the first poll', async () => {
+    let calls = 0;
+    const err = await waitForTerminal(
+      async () => {
+        calls++;
+        throw parseApiError(500, JSON.stringify({ ok: false, error: 'INTERNAL_ERROR' }));
+      },
+      () => true,
+      poll,
+    ).catch((e: unknown) => e);
+    expect((err as ApiError).httpStatus).toBe(500);
+    expect(calls).toBe(1);
+  });
+
+  it('polls again after a 503 or a network error', async () => {
+    let calls = 0;
+    const res = await waitForTerminal(
+      async () => {
+        calls++;
+        if (calls === 1) throw parseApiError(503, 'upstream');
+        if (calls === 2) throw networkError('socket hang up');
+        return 'done';
+      },
+      (v) => v === 'done',
+      poll,
+    );
+    expect(res).toBe('done');
+    expect(calls).toBe(3);
   });
 });

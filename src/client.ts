@@ -20,7 +20,7 @@ import { EnergyService } from './services/energy';
 import { NativeService } from './services/native';
 
 /** SDK version, reported in the default `User-Agent`. */
-export const VERSION = '0.14.0';
+export const VERSION = '0.15.0';
 
 /** Production processing API endpoint. Test-mode projects share this host. */
 export const DEFAULT_BASE_URL = 'https://api-processing.crypto-chief.com';
@@ -51,9 +51,10 @@ export interface ClientOptions {
   /** Per-attempt request timeout in milliseconds. Default 60000. */
   timeoutMs?: number;
   /**
-   * Automatic retries for transport failures and 5xx responses. Default 3.
-   * Set 0 to disable. Idempotency is provided by `order_id` (payout) and
-   * `uuid` (transaction execute), so retries are safe.
+   * Automatic retries for HTTP 502, 503, 504 and network errors. Default 3.
+   * Set 0 to disable. Other statuses, 500 included, are not retried.
+   * Idempotency is provided by `order_id` (payout) and `uuid` (transaction
+   * execute), so retries are safe.
    */
   retries?: number;
   /** Backoff tuning. Defaults to base 200ms, cap 5000ms (exponential + jitter). */
@@ -215,9 +216,10 @@ export class CryptoChiefClient {
    * ```
    *
    * Encodes the body as JSON once, signs every attempt with HMAC v1, retries
-   * transient failures, and returns the parsed JSON. The method is signed and
-   * sent upper-cased over `a`-`z`; anything that is not an RFC 9110 token
-   * throws {@link CryptoChiefError}, as does a body on `GET` or `HEAD`.
+   * HTTP 502, 503, 504 and network errors, and returns the parsed JSON. The
+   * method is signed and sent upper-cased over `a`-`z`; anything that is not an
+   * RFC 9110 token throws {@link CryptoChiefError}, as does a body on `GET` or
+   * `HEAD`.
    *
    * Object fields that are `null` or `undefined` are not sent; `null` array
    * elements are. A `bigint` is sent as its exact integer. `undefined` and
@@ -311,7 +313,7 @@ export class CryptoChiefClient {
       }
 
       const apiErr = parseApiError(resp.status, text);
-      if (resp.status >= 500) {
+      if (isRetryable(apiErr)) {
         lastErr = apiErr;
         continue;
       }

@@ -22,7 +22,7 @@ and `instanceof`-friendly error codes.
 - **Contract calls without hand-encoded calldata** - Solidity ABI for EVM and
   TRON, Anchor + Borsh for Solana, Jetton / NFT / comment helpers for TON.
 - **Local RSA decryption** of generated wallet private keys (opt-in).
-- Stable error codes via `ApiError`, automatic retry on transient failures.
+- Stable error codes via `ApiError`, automatic retry of HTTP 502, 503, 504 and network errors.
 - Arbitrary-precision amounts via native `bigint` - never `number`/float.
 - Webhook verification + a typed handler for `http` / Express.
 - Promise-based polling that resolves when a payout / transaction / pay-in is final.
@@ -609,6 +609,10 @@ try {
 
 `err.serverTime` holds `server_time` (Unix seconds) when the body has it.
 
+The client retries HTTP 502, 503, 504 and network errors up to `retries` times
+(default 3); any other status, 500 included, is thrown on the first answer.
+`isRetryable(err)` applies the same rule.
+
 ## Amounts
 
 **Never use `number` (float) for crypto amounts.** Use `bigint` via
@@ -634,7 +638,7 @@ const client = new CryptoChiefClient({
   apiKey: 'API_KEY',
   baseUrl: 'https://api-processing.crypto-chief.com', // default
   timeoutMs: 60_000,                                  // per-attempt
-  retries: 3,                                         // 5xx + transport
+  retries: 3,                                         // 502, 503, 504 + network errors
   retryBackoff: { baseMs: 200, maxMs: 5_000 },
   userAgent: 'my-service/1.0',
   fetch: globalThis.fetch,                            // inject a custom fetch
@@ -661,7 +665,7 @@ await client.payouts.execute(req, { idempotencyKey: 'payout-2026-09-16-0001' });
 
 `payouts.execute` / `payouts.batchExecute` are idempotent on `orderId`:
 re-submitting the same `orderId` returns the same `uuid` rather than creating a
-second payout. The built-in 5xx retry relies on this - no extra ceremony needed.
+second payout. The built-in retry relies on this - no extra ceremony needed.
 
 `idempotencyKey` is a separate per-call option, accepted by every service method
 and by `client.request` / `client.send`. The server keeps it in the billing

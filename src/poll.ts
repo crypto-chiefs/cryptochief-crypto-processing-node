@@ -24,9 +24,9 @@ export class PollTimeoutError<T> extends CryptoChiefError {
 
 /**
  * Poll `fetchOne` until `isTerminal` is satisfied or the timeout elapses.
- * Transient (retryable) fetch errors are tolerated and retried on the next
- * tick; non-retryable errors propagate immediately. On timeout a
- * {@link PollTimeoutError} carrying the last observed state is thrown.
+ * HTTP 502, 503, 504 and network errors are tolerated and polled again on the
+ * next tick; any other error, 500 included, propagates immediately. On timeout
+ * a {@link PollTimeoutError} carrying the last observed state is thrown.
  */
 export async function waitForTerminal<T>(
   fetchOne: (signal?: AbortSignal) => Promise<T>,
@@ -46,7 +46,6 @@ export async function waitForTerminal<T>(
       if (isTerminal(value)) return value;
     } catch (err) {
       if (!isRetryable(err)) throw err;
-      // Tolerate transient errors (e.g. uuid not yet visible) and retry.
     }
     const remaining = deadline - Date.now();
     if (remaining <= 0) throw new PollTimeoutError<T>(timeoutMs, last);

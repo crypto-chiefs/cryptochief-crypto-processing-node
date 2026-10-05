@@ -160,15 +160,20 @@ export function isApiError(err: unknown, code?: string): err is ApiError {
   return err instanceof ApiError && (code === undefined || err.code === code);
 }
 
+/** HTTP statuses the client retries. */
+const RETRYABLE_HTTP_STATUSES: ReadonlySet<number> = new Set([502, 503, 504]);
+
 /**
- * Reports whether an error is plausibly transient and worth retrying. The
- * transport uses it internally; callers retrying at a higher level can too.
+ * Reports whether the client retries an error automatically: HTTP 502, 503,
+ * 504, or a network error (no response, connection refused or reset, timeout,
+ * unreadable response body). Any other status, 500 included, is not retried.
+ * The transport uses it internally; callers retrying at a higher level can too.
  */
 export function isRetryable(err: unknown): boolean {
   if (err instanceof ApiError) {
-    // Structured response - only 5xx (and transport NETWORK_ERROR) are retryable.
-    return err.httpStatus >= 500 || err.code === ErrorCode.NetworkError;
+    if (err.httpStatus === 0) return err.code === ErrorCode.NetworkError;
+    return RETRYABLE_HTTP_STATUSES.has(err.httpStatus);
   }
-  // Bare network/transport errors are retryable.
+  // Any other Error is treated as a network error.
   return err instanceof Error;
 }
