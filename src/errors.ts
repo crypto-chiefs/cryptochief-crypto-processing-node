@@ -90,6 +90,14 @@ export const ErrorCode = {
   ServiceError: 'SERVICE_ERROR',
   Unauthorized: 'UNAUTHORIZED',
   UrlCallbackRequired: 'URL_CALLBACK_REQUIRED',
+  /** `url_callback` of a PayIn, payout, batch payout item or signed transaction: the host is a non-public IP address, a single-label or local name, or resolves to a non-public address (HTTP 400). */
+  UrlCallbackHostNotAllowed: 'url_callback_HOST_NOT_ALLOWED',
+  /** `url_callback`: the scheme is not https or http (HTTP 400). */
+  UrlCallbackSchemeInvalid: 'url_callback_SCHEME_INVALID',
+  /** `url_callback`: not an absolute URL (HTTP 400). */
+  UrlCallbackInvalid: 'url_callback_INVALID',
+  /** Static wallet `callback_url` (generate, set callback URL) breaks the same rule; the reason is in the message (HTTP 400). */
+  CallbackUrlInvalid: 'CALLBACK_URL_INVALID',
   LabelTooLong: 'LABEL_TOO_LONG',
   /** The object does not exist OR is not this project's - deliberately indistinguishable. */
   NotFound: 'NOT_FOUND',
@@ -132,6 +140,18 @@ export const ErrorCode = {
   ContractCallsUnsupported: 'CONTRACT_CALLS_UNSUPPORTED_ON_NETWORK',
   /** `type: 'contract'` on `/v1/transaction/estimate` - only native/token transfers can be estimated. */
   ContractEstimateUnsupported: 'CONTRACT_ESTIMATE_UNSUPPORTED',
+  /**
+   * Transaction estimate or sign of a token transfer: `from_address` holds less
+   * of the token than `value` (HTTP 400). Execute reports it as
+   * `PREFLIGHT_FAILED: insufficient_balance`.
+   */
+  InsufficientBalance: 'INSUFFICIENT_BALANCE',
+  /**
+   * EVM sign: the transaction reverted in simulation (HTTP 400). The contract's
+   * reason may follow (`SIMULATION_REVERTED: <reason>`); compare with
+   * `code.startsWith(...)`.
+   */
+  SimulationReverted: 'SIMULATION_REVERTED',
   /** HMAC v1: `Merchant` or an `X-CC-*` header is missing, repeated or malformed (HTTP 400). */
   BadAuthHeaders: 'BAD_AUTH_HEADERS',
   /** HMAC v1: `X-CC-Timestamp` is more than 300 s off server time (HTTP 401). The body carries `server_time`. */
