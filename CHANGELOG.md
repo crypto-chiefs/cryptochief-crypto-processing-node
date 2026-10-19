@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.15.1] — 2026-10-19
 
 - `ErrorCode`: `InsufficientBalance`, `SimulationReverted` (match by prefix), `UrlCallbackHostNotAllowed`, `UrlCallbackSchemeInvalid`, `UrlCallbackInvalid`, `CallbackUrlInvalid`
 
