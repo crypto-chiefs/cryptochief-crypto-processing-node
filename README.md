@@ -140,7 +140,7 @@ Approximate time from broadcast to `paid`:
 
 `transactions.sign` builds and cryptographically signs a transaction **without
 broadcasting**. The TTL of the signed reservation varies by chain (EVM 10m, UTXO
-15m, TRON 45s, Solana 60s, XRP 90s, TON 300s) - call `execute` before it expires.
+15m, TRON 45s, Solana 25s, XRP 90s, TON 300s) - call `execute` before it expires.
 
 ```ts
 import { TxType, humanToBase } from '@cryptochiefs/cryptochief-crypto-processing-node';

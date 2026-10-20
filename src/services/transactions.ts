@@ -333,7 +333,7 @@ export class TransactionsService extends BaseService {
 
   /**
    * Build and sign a transaction WITHOUT broadcasting. The signature has a
-   * per-family TTL (EVM 10m, UTXO 15m, TRON 45s, Solana 60s, XRP 90s, TON 300s)
+   * per-family TTL (EVM 10m, UTXO 15m, TRON 45s, Solana 25s, XRP 90s, TON 300s)
    * - call `execute` before it elapses.
    */
   sign(req: SignTransactionRequest, opts?: RequestOptions): Promise<SignTransactionResponse> {
