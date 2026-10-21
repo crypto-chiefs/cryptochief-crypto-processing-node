@@ -30,6 +30,8 @@ and `instanceof`-friendly error codes.
 
 ## Install
 
+Current version: `0.16.0`.
+
 ```bash
 npm install @cryptochiefs/cryptochief-crypto-processing-node
 ```
@@ -612,6 +614,12 @@ try {
 The client retries HTTP 502, 503, 504 and network errors up to `retries` times
 (default 3); any other status, 500 included, is thrown on the first answer.
 `isRetryable(err)` applies the same rule.
+
+Failed items from `payouts.batchEstimate` and `payouts.batchExecute` carry
+optional `httpStatus` (wire `http_status`), the HTTP status the item would receive
+as a separate request. Successful items omit it. `isBatchItemRetryable(item)`
+returns true only for `httpStatus === 502`; retry a failed execution item with
+the same `orderId`.
 
 ## Amounts
 

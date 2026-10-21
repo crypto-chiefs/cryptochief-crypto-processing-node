@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.16.0] — 2026-10-21
+
+- `BatchItemResult.httpStatus` (wire `http_status`) on failed items from `payouts.batchEstimate` and `payouts.batchExecute`; absent on successful items
+- `isBatchItemRetryable(item)`: true only for `httpStatus === 502`; retry execution with the same `orderId`
+
 ## [0.15.1] — 2026-10-19
 
 - `ErrorCode`: `InsufficientBalance`, `SimulationReverted` (match by prefix), `UrlCallbackHostNotAllowed`, `UrlCallbackSchemeInvalid`, `UrlCallbackInvalid`, `CallbackUrlInvalid`

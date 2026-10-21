@@ -1,5 +1,6 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { CryptoChiefClient } from '../src/client';
+import { isBatchItemRetryable } from '../src/index';
 import { PollTimeoutError } from '../src/poll';
 import { isPayoutTerminal, PayoutStatus, type PayoutInfo } from '../src/services/payouts';
 
@@ -112,6 +113,86 @@ const queued = {
   created_at: '2026-09-14T10:05:00Z',
   completed_at: null,
 };
+
+describe('batch payout HTTP statuses', () => {
+  it.each(['estimate', 'execute'] as const)('reads item HTTP statuses from batch %s', async (endpoint) => {
+    const errors = [
+      { index: 1, status: 'error', error: 'FAILED_TO_ESTIMATE_FEE', http_status: 400 },
+      { index: 2, status: 'error', error: 'FAILED_TO_ESTIMATE_FEE', http_status: 502 },
+      { index: 3, status: 'error', error: 'INTERNAL_ERROR' },
+      { index: 4, status: 'error', error: 'UNKNOWN_ERROR', http_status: 599 },
+    ];
+    const body = endpoint === 'estimate'
+      ? {
+          total: 5,
+          ok: 1,
+          failed: 4,
+          total_estimated_fee_fiat: '0.40',
+          items: [
+            {
+              index: 0,
+              status: 'ok',
+              estimate: {
+                network: 'ETH_MAINNET',
+                coin: 'USDT',
+                amount: '10',
+                amount_to_receive: '10',
+                to_address: '0xdest',
+                fee_info: { fee_mode: 'client', estimated_fiat: '0.40', limit_currency: 'USD' },
+              },
+            },
+            ...errors,
+          ],
+        }
+      : {
+          batch_uuid: 'b-1',
+          total: 5,
+          accepted: 1,
+          rejected: 4,
+          items: [
+            { index: 0, order_id: 'o-2', status: 'queue', uuid: 'p-2', payout: queued },
+            ...errors.map((item) => ({ ...item, order_id: `o-${item.index + 2}` })),
+          ],
+        };
+    const { client, calls } = makeClient(() => json(200, body));
+    const req = {
+      items: Array.from({ length: 5 }, (_, index) => ({
+        network: 'ETH_MAINNET' as const,
+        coin: 'USDT',
+        amount: '10',
+        toAddress: '0xdest',
+        orderId: `o-${index + 2}`,
+        userId: 'u-1',
+        urlCallback: 'https://m.example/hook',
+      })),
+    };
+
+    const out = endpoint === 'estimate'
+      ? await client.payouts.batchEstimate(req)
+      : await client.payouts.batchExecute(req);
+
+    expect(calls[0]!.url).toMatch(new RegExp(`/v1/payout/batch/${endpoint}$`));
+    expect(out.items.map((item) => item.httpStatus)).toEqual([undefined, 400, 502, undefined, 599]);
+    expect(out.items[0]!.status).toBe(endpoint === 'estimate' ? 'ok' : 'queue');
+    expect(Object.hasOwn(out.items[0]!, 'httpStatus')).toBe(false);
+    expect(Object.hasOwn(out.items[3]!, 'httpStatus')).toBe(false);
+    expect(out.items.slice(1).map((item) => item.error)).toEqual(errors.map((item) => item.error));
+    expect(out.items.map(isBatchItemRetryable)).toEqual([false, false, true, false, false]);
+  });
+
+  it.each([
+    [400, false],
+    [408, false],
+    [500, false],
+    [502, true],
+    [503, false],
+    [504, false],
+    [599, false],
+    [undefined, false],
+  ] as const)('reports retryability for HTTP status %s as %s', (httpStatus, retryable) => {
+    expect(isBatchItemRetryable({ index: 0, orderId: 'o-1', status: 'error', httpStatus })).toBe(retryable);
+  });
+});
 
 describe('payout statuses', () => {
   it('lists the statuses the payout worker reports', () => {

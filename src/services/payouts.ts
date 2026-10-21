@@ -205,6 +205,16 @@ export interface BatchItemResult {
   status: string;
   uuid?: string;
   error?: string;
+  /** HTTP status the item would return as a single request. Absent on success. */
+  httpStatus?: number;
+}
+
+/**
+ * Whether a batch payout item can be retried: only HTTP 502.
+ * For batch execute, retry the item with the same `orderId`.
+ */
+export function isBatchItemRetryable(item: BatchItemResult): boolean {
+  return item.httpStatus === 502;
 }
 
 export interface BatchPayoutResponse {
